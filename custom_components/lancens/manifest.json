@@ -6,5 +6,5 @@
     ],
     "iot_class": "cloud_polling",
     "config_flow": true,
-    "version": "20260308.1"
+    "version": "20260308.2"
 }
