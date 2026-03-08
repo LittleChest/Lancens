@@ -1,0 +1,22 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Connect to Lancens",
+                "description": "Please enter your Lancens API Token. You can find this in your network traffic logs (header 'token'). Optionally provide UID if known, otherwise we will try to discover it.",
+                "data": {
+                    "token": "API Token",
+                    "uid": "Device UID (Optional)"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "invalid_auth": "Invalid authentication",
+            "unknown": "Unexpected error"
+        },
+        "abort": {
+            "already_configured": "Device is already configured"
+        }
+    }
+}
