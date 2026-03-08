@@ -7,7 +7,6 @@ import async_timeout
 
 TIMEOUT = 10
 
-
 _LOGGER = logging.getLogger(__name__)
 
 HEADERS = {
@@ -41,13 +40,11 @@ class LancensApiClient:
 
     async def async_get_settings(self, uid: str) -> list:
         """Get settings from the API."""
-        # /v1/api/device/screen/light?uid=...&entry=mini
         url = f"{self._base_url}/v1/api/device/screen/light?uid={uid}&entry=mini"
         return await self._api_wrapper(method="get", url=url)
 
     async def async_set_screen_settings(self, uid: str, **kwargs) -> bool:
         """Set screen settings."""
-        # POST /v1/api/device/screen/light
         url = f"{self._base_url}/v1/api/device/screen/light"
         data = {
             "uid": uid,
@@ -62,13 +59,11 @@ class LancensApiClient:
 
     async def async_get_wx_push_status(self, uid: str) -> dict:
         """Get push status."""
-        # GET /v1/api/device/mini/wx/push/status?uid=...&entry=mini&type=main
         url = f"{self._base_url}/v1/api/device/mini/wx/push/status?uid={uid}&entry=mini&type=main"
         return await self._api_wrapper(method="get", url=url)
 
     async def async_set_wx_push(self, uid: str, enabled: bool) -> bool:
         """Set push status."""
-        # POST /v1/api/device/mini/push
         url = f"{self._base_url}/v1/api/device/mini/push"
         data = {
             "type": "main",
@@ -79,7 +74,6 @@ class LancensApiClient:
 
     async def async_set_battery_display(self, uid: str, enabled: bool) -> bool:
         """Set battery display."""
-        # POST /v1/api/device/battery/status
         url = f"{self._base_url}/v1/api/device/battery/status"
         data = {
             "uuid": uid,
@@ -104,25 +98,25 @@ class LancensApiClient:
                         response = await self._session.get(url, headers=headers)
                         response.raise_for_status()
                         if response.status == 304:
-                             return {} 
-                        return await response.json()
+                             return {}
+                        return await response.json(content_type=None)
 
                     elif method == "put":
                         response = await self._session.put(url, headers=headers, json=data)
                         response.raise_for_status()
-                        return await response.json()
+                        return await response.json(content_type=None)
 
                     elif method == "patch":
                         response = await self._session.patch(url, headers=headers, json=data)
                         response.raise_for_status()
-                        return await response.json()
+                        return await response.json(content_type=None)
 
                     elif method == "post":
                         response = await self._session.post(url, headers=headers, json=data)
                         response.raise_for_status()
                         if response.status == 204:
                             return True
-                        return await response.json()
+                        return await response.json(content_type=None)
             except aiohttp.ServerDisconnectedError as exception:
                 if attempt == 2:
                     _LOGGER.error("Server disconnected error fetching information from %s - %s", url, exception)

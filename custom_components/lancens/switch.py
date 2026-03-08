@@ -23,15 +23,10 @@ async def async_setup_entry(
     
     entities =[]
     
-    # Settings from 'settings' endpoint (list of dicts)
-    #[{"screenon_timeout":5,"time_zone":"480","bat_display_en":0,"call_screen_on":1,"standby_mode":1}]
-    # We assume first item.
-    
     entities.append(LancensSettingSwitch(coordinator, "bat_display_en", "电量显示", "mdi:battery"))
     entities.append(LancensSettingSwitch(coordinator, "call_screen_on", "呼叫唤醒", "mdi:video"))
     entities.append(LancensSettingSwitch(coordinator, "standby_mode", "待机模式", "mdi:power-sleep"))
     
-    # WX Push
     entities.append(LancensWxPushSwitch(coordinator))
     
     async_add_entities(entities)
@@ -66,13 +61,22 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
             return bool(val)
         return None
 
+    def _get_current_screenon_timeout(self) -> int:
+        """Get the current screenon_timeout to satisfy API requirements."""
+        if self.coordinator.data:
+            settings_list = self.coordinator.data.get("settings",[])
+            if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
+                return settings_list[0].get("screenon_timeout", 5)
+        return 5
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
         try:
             if self._key == "bat_display_en":
                  await self.coordinator.client.async_set_battery_display(self.coordinator.uid, True)
             else:
-                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: 1})
+                 payload = {self._key: 1, "screenon_timeout": self._get_current_screenon_timeout()}
+                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **payload)
             await self.coordinator.async_request_refresh()
         except Exception as err:
             raise HomeAssistantError(f"Failed to turn on: {err}") from err
@@ -83,7 +87,8 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
             if self._key == "bat_display_en":
                  await self.coordinator.client.async_set_battery_display(self.coordinator.uid, False)
             else:
-                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: 0})
+                 payload = {self._key: 0, "screenon_timeout": self._get_current_screenon_timeout()}
+                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **payload)
             await self.coordinator.async_request_refresh()
         except Exception as err:
             raise HomeAssistantError(f"Failed to turn off: {err}") from err
