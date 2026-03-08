@@ -3,16 +3,25 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 
 from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from . import LancensDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
+
+IMAGE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541739) XWEB/18955",
+    "Referer": "https://servicewechat.com/wx70441541e13a229d/87/page-frame.html"
+}
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -52,7 +61,6 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
             
             if not raw_url:
                 return None
-
             if raw_url.startswith("http"):
                 return raw_url
             else:
@@ -60,6 +68,7 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
                     decoded_bytes = base64.b64decode(raw_url)
                     return decoded_bytes.decode("utf-8")
                 except (binascii.Error, UnicodeDecodeError):
+                    _LOGGER.warning("Image URL decode failed, using raw value")
                     return raw_url
                     
         return None
@@ -67,18 +76,26 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
     @property
     def image_last_updated(self) -> dt_util.dt.datetime | None:
         """The time when the image was last updated."""
+        if self.coordinator.data:
+            events = self.coordinator.data.get("events")
+            event_list = events.get("resultData", {}).get("eventList", [])
+            if event_list and len(event_list) > 0:
+                time_str = event_list[0].get("time")
+                if time_str:
+                    return dt_util.parse_datetime(time_str)
         return self._attr_image_last_updated
 
     async def async_image(self) -> bytes | None:
-        """Fetch image from URL."""
+        """Fetch image from URL with specific headers to bypass hotlink protection."""
         url = self.image_url
         if not url:
             return None
             
         try:
-            session = self.hass.helpers.aiohttp_client.async_get_clientsession(self.hass)
-            async with session.get(url, timeout=10) as response:
+            session = async_get_clientsession(self.hass)
+            async with session.get(url, headers=IMAGE_HEADERS, timeout=15) as response:
                 response.raise_for_status()
                 return await response.read()
-        except Exception:
+        except Exception as err:
+            _LOGGER.error("Error downloading image: %s", err)
             return None
