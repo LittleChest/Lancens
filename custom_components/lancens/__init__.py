@@ -39,8 +39,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
              _LOGGER.info("UID not provided, attempting discovery...")
              devices = await client.async_get_data()
              
-             if isinstance(devices, list) and len(devices) > 0:
-                 first_device = devices[0]
+             device_list =[]
+             if isinstance(devices, dict):
+                 device_list = devices.get("deviceList",[])
+             elif isinstance(devices, list):
+                 device_list = devices
+
+             if device_list and len(device_list) > 0:
+                 first_device = device_list[0]
                  # Try common keys
                  uid = first_device.get("uid") or first_device.get("uuid") or first_device.get("id")
                  if uid:

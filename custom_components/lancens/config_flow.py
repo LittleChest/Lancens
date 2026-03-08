@@ -59,16 +59,21 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         try:
             devices = await client.async_get_data()
             _LOGGER.debug("Discovery response: %s", devices)
-            # If devices is a list, pick the first one?
-            # Or just validate that we got a response.
-            # Without structure knowledge, we can't reliably pick a UID here.
-            # But we can at least confirm the token works.
-            pass 
+            
+            device_list = []
+            if isinstance(devices, dict):
+                device_list = devices.get("deviceList",[])
+            elif isinstance(devices, list):
+                device_list = devices
+                
+            if device_list and len(device_list) > 0:
+                first_device = device_list[0]
+                uid = first_device.get("uid") or first_device.get("uuid") or first_device.get("id")
         except Exception as err:
              _LOGGER.error("Discovery failed: %s", err)
              raise InvalidAuth from err
 
-    return {"title": f"叮叮智能 {uid if uid else ''}"}
+    return {"title": f"叮叮智能 {uid if uid else ''}".strip()}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
