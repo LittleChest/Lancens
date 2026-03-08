@@ -1,6 +1,10 @@
 """Sensor platform for Lancens."""
 from __future__ import annotations
 
+import base64
+import json
+import logging
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -9,6 +13,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from . import LancensDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -43,8 +49,27 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
             
         event_list = events.get("resultData", {}).get("eventList", [])
         if event_list and len(event_list) > 0:
-            # Assume first event is latest
-            return event_list[0].get("event_type", "未知")
+            event = event_list[0]
+
+            info_raw = event.get("info")
+            if info_raw:
+                try:
+                    decoded_str = base64.b64decode(info_raw).decode("utf-8")
+                    info_json = json.loads(decoded_str)
+
+                    device_type = info_json.get("event_device")
+                    event_type = info_json.get("event_type")
+
+                    if device_type == "LOCK_PUSH":
+                        return "门锁推送"
+                    if event_type:
+                        return f"事件代码 {event_type}"
+                        
+                except Exception as e:
+                    _LOGGER.warning("Failed to decode event info: %s", e)
+
+            return f"Type {event.get('type', 'Unknown')}"
+            
         return "无事件"
 
     @property
@@ -60,10 +85,19 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
         event_list = events.get("resultData", {}).get("eventList", [])
         if event_list and len(event_list) > 0:
             event = event_list[0]
-            return {
-                "time": event.get("event_time"),
-                "user": event.get("user_name"),
-                "type": event.get("event_type"),
-                "raw_data": event
+            attrs = {
+                "time": event.get("time"),
+                "type_code": event.get("type"),
+                "event_guid": event.get("event_guid")
             }
+
+            info_raw = event.get("info")
+            if info_raw:
+                try:
+                    decoded_str = base64.b64decode(info_raw).decode("utf-8")
+                    attrs["decoded_info"] = json.loads(decoded_str)
+                except:
+                    pass
+            
+            return attrs
         return {}

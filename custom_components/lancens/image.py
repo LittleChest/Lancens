@@ -1,7 +1,8 @@
 """Image platform for Lancens."""
 from __future__ import annotations
 
-import httpx
+import base64
+import binascii
 
 from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
@@ -46,18 +47,26 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
 
         event_list = events.get("resultData", {}).get("eventList", [])
         if event_list and len(event_list) > 0:
-            # Assume key is 'file_path' or 'img_url' or 'url'
             event = event_list[0]
-            url = event.get("file_path") or event.get("img_url") or event.get("url") or event.get("image")
-            return url
+            raw_url = event.get("img") or event.get("file_path") or event.get("url")
+            
+            if not raw_url:
+                return None
+
+            if raw_url.startswith("http"):
+                return raw_url
+            else:
+                try:
+                    decoded_bytes = base64.b64decode(raw_url)
+                    return decoded_bytes.decode("utf-8")
+                except (binascii.Error, UnicodeDecodeError):
+                    return raw_url
+                    
         return None
     
     @property
     def image_last_updated(self) -> dt_util.dt.datetime | None:
         """The time when the image was last updated."""
-        if not self.coordinator.data:
-            return self._attr_image_last_updated
-            
         return self._attr_image_last_updated
 
     async def async_image(self) -> bytes | None:
