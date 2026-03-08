@@ -6,6 +6,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -20,10 +21,10 @@ async def async_setup_entry(
     """Set up the switch platform."""
     coordinator: LancensDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
     
-    entities = []
+    entities =[]
     
     # Settings from 'settings' endpoint (list of dicts)
-    # [{"screenon_timeout":5,"time_zone":"480","bat_display_en":0,"call_screen_on":1,"standby_mode":1}]
+    #[{"screenon_timeout":5,"time_zone":"480","bat_display_en":0,"call_screen_on":1,"standby_mode":1}]
     # We assume first item.
     
     entities.append(LancensSettingSwitch(coordinator, "bat_display_en", "电量显示", "mdi:battery"))
@@ -56,7 +57,10 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if switch is on."""
-        settings_list = self.coordinator.data.get("settings", [])
+        if not self.coordinator.data:
+            return None
+            
+        settings_list = self.coordinator.data.get("settings",[])
         if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
             val = settings_list[0].get(self._key)
             return bool(val)
@@ -64,19 +68,25 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
-        if self._key == "bat_display_en":
-             await self.coordinator.client.async_set_battery_display(self.coordinator.uid, True)
-        else:
-             await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: 1})
-        await self.coordinator.async_request_refresh()
+        try:
+            if self._key == "bat_display_en":
+                 await self.coordinator.client.async_set_battery_display(self.coordinator.uid, True)
+            else:
+                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: 1})
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to turn on: {err}") from err
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        if self._key == "bat_display_en":
-             await self.coordinator.client.async_set_battery_display(self.coordinator.uid, False)
-        else:
-             await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: 0})
-        await self.coordinator.async_request_refresh()
+        try:
+            if self._key == "bat_display_en":
+                 await self.coordinator.client.async_set_battery_display(self.coordinator.uid, False)
+            else:
+                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: 0})
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to turn off: {err}") from err
 
 class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
     """Switch for WX Push."""
@@ -91,16 +101,27 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if on."""
-        # {"wx_push":1,"wet_play":-1}
-        data = self.coordinator.data.get("wx_push", {})
+        if not self.coordinator.data:
+            return None
+            
+        data = self.coordinator.data.get("wx_push")
+        if not data or not isinstance(data, dict):
+            return None
+            
         return bool(data.get("wx_push"))
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on."""
-        await self.coordinator.client.async_set_wx_push(self.coordinator.uid, True)
-        await self.coordinator.async_request_refresh()
+        try:
+            await self.coordinator.client.async_set_wx_push(self.coordinator.uid, True)
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to turn on: {err}") from err
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off."""
-        await self.coordinator.client.async_set_wx_push(self.coordinator.uid, False)
-        await self.coordinator.async_request_refresh()
+        try:
+            await self.coordinator.client.async_set_wx_push(self.coordinator.uid, False)
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to turn off: {err}") from err

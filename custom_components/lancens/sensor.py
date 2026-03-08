@@ -34,18 +34,32 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         """Return the state of the sensor."""
-        events = self.coordinator.data.get("events", {}).get("resultData", {}).get("eventList", [])
-        if events and len(events) > 0:
+        if not self.coordinator.data:
+            return "未知"
+            
+        events = self.coordinator.data.get("events")
+        if not events or not isinstance(events, dict):
+            return "未知"
+            
+        event_list = events.get("resultData", {}).get("eventList", [])
+        if event_list and len(event_list) > 0:
             # Assume first event is latest
-            return events[0].get("event_type", "未知") # Fallback key
+            return event_list[0].get("event_type", "未知")
         return "无事件"
 
     @property
     def extra_state_attributes(self) -> dict[str, any]:
         """Return the state attributes."""
-        events = self.coordinator.data.get("events", {}).get("resultData", {}).get("eventList", [])
-        if events and len(events) > 0:
-            event = events[0]
+        if not self.coordinator.data:
+            return {}
+
+        events = self.coordinator.data.get("events")
+        if not events or not isinstance(events, dict):
+            return {}
+
+        event_list = events.get("resultData", {}).get("eventList", [])
+        if event_list and len(event_list) > 0:
+            event = event_list[0]
             return {
                 "time": event.get("event_time"),
                 "user": event.get("user_name"),

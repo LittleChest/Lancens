@@ -4,6 +4,7 @@ from __future__ import annotations
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -57,12 +58,18 @@ class LancensNumber(CoordinatorEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         """Return the value."""
-        settings_list = self.coordinator.data.get("settings", [])
+        if not self.coordinator.data:
+            return None
+            
+        settings_list = self.coordinator.data.get("settings",[])
         if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
             return settings_list[0].get(self._key)
         return None
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the value."""
-        await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: int(value)})
-        await self.coordinator.async_request_refresh()
+        try:
+            await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: int(value)})
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to set value: {err}") from err

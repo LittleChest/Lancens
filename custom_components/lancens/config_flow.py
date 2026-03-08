@@ -58,12 +58,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         # No UID provided, try to fetch device list
         try:
             devices = await client.async_get_data()
+            _LOGGER.debug("Discovery response: %s", devices)
             # If devices is a list, pick the first one?
             # Or just validate that we got a response.
             # Without structure knowledge, we can't reliably pick a UID here.
             # But we can at least confirm the token works.
             pass 
         except Exception as err:
+             _LOGGER.error("Discovery failed: %s", err)
              raise InvalidAuth from err
 
     return {"title": f"叮叮智能 {uid if uid else ''}"}

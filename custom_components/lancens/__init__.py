@@ -105,13 +105,25 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             # We need to fetch multiple things
             # 1. Events (for last unlock)
-            events = await self.client.async_get_events(self.uid)
-            
+            try:
+                events = await self.client.async_get_events(self.uid)
+            except Exception as e:
+                _LOGGER.warning("Error fetching events: %s", e)
+                events = {}
+
             # 2. Settings (Screen/Light)
-            settings = await self.client.async_get_settings(self.uid)
-            
+            try:
+                settings = await self.client.async_get_settings(self.uid)
+            except Exception as e:
+                _LOGGER.warning("Error fetching settings: %s", e)
+                settings = []
+
             # 3. WX Push Status
-            wx_push = await self.client.async_get_wx_push_status(self.uid)
+            try:
+                wx_push = await self.client.async_get_wx_push_status(self.uid)
+            except Exception as e:
+                _LOGGER.warning("Error fetching wx_push: %s", e)
+                wx_push = {}
             
             return {
                 "events": events,

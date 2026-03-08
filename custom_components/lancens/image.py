@@ -37,27 +37,27 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
     @property
     def image_url(self) -> str | None:
         """Return URL of image."""
-        events = self.coordinator.data.get("events", {}).get("resultData", {}).get("eventList", [])
-        if events and len(events) > 0:
+        if not self.coordinator.data:
+            return None
+        
+        events = self.coordinator.data.get("events")
+        if not events or not isinstance(events, dict):
+             return None
+
+        event_list = events.get("resultData", {}).get("eventList", [])
+        if event_list and len(event_list) > 0:
             # Assume key is 'file_path' or 'img_url' or 'url'
-            event = events[0]
+            event = event_list[0]
             url = event.get("file_path") or event.get("img_url") or event.get("url") or event.get("image")
-            
-            # If URL is relative, try to prepend OSS host?
-            # But we don't know the host from log (it was lancens0hb...).
-            # We hope it's absolute.
             return url
         return None
     
     @property
     def image_last_updated(self) -> dt_util.dt.datetime | None:
         """The time when the image was last updated."""
-        events = self.coordinator.data.get("events", {}).get("resultData", {}).get("eventList", [])
-        if events and len(events) > 0:
-             # Try to parse event time?
-             # For now, just return None or current time if changed?
-             # Coordinator handles updates.
-             pass
+        if not self.coordinator.data:
+            return self._attr_image_last_updated
+            
         return self._attr_image_last_updated
 
     async def async_image(self) -> bytes | None:
