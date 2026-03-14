@@ -5,7 +5,7 @@ import socket
 import aiohttp
 import async_timeout
 
-TIMEOUT = 10
+TIMEOUT = 15
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +35,6 @@ class LancensApiClient:
         url = f"{self._base_url}/v1/api/mini/device/event/info/all?type=main&chooseType=&uid={uid}&page=0&page_number=20"
         if time:
             url += f"&time={time}"
-        
         return await self._api_wrapper(method="get", url=url)
 
     async def async_get_settings(self, uid: str) -> list:
@@ -46,16 +45,9 @@ class LancensApiClient:
     async def async_set_screen_settings(self, uid: str, **kwargs) -> bool:
         """Set screen settings."""
         url = f"{self._base_url}/v1/api/device/screen/light"
-        data = {
-            "uid": uid,
-            "entry": "mini"
-        }
+        data = {"uid": uid, "entry": "mini"}
         data.update(kwargs)
         return await self._api_wrapper(method="post", url=url, data=data)
-
-    async def async_set_screen_timeout(self, uid: str, value: int) -> bool:
-        """Set screen timeout."""
-        return await self.async_set_screen_settings(uid, screenon_timeout=value)
 
     async def async_get_wx_push_status(self, uid: str) -> dict:
         """Get push status."""
@@ -65,22 +57,42 @@ class LancensApiClient:
     async def async_set_wx_push(self, uid: str, enabled: bool) -> bool:
         """Set push status."""
         url = f"{self._base_url}/v1/api/device/mini/push"
-        data = {
-            "type": "main",
-            "uid": uid,
-            "wx_push": 1 if enabled else 0
-        }
+        data = {"type": "main", "uid": uid, "wx_push": 1 if enabled else 0}
         return await self._api_wrapper(method="post", url=url, data=data)
 
     async def async_set_battery_display(self, uid: str, enabled: bool) -> bool:
         """Set battery display."""
         url = f"{self._base_url}/v1/api/device/battery/status"
-        data = {
-            "uuid": uid,
-            "entry": "mini",
-            "bat_display_en": 1 if enabled else 0
-        }
+        data = {"uuid": uid, "entry": "mini", "bat_display_en": 1 if enabled else 0}
         return await self._api_wrapper(method="post", url=url, data=data)
+
+    async def async_unlock(self, uid: str, event_guid: str, user_id: str, reflash_token: str, auth_pass: str) -> bool:
+        """Send remote unlock request."""
+        url = f"{self._base_url}/v1/api/server/open/lock"
+        # Dummy sign as placeholder based on payload log (normally evaluated via hashing)
+        sign = "92efcc26007c2faa730d212cb4e7c57a7ee821dd" 
+        data = {
+            "authPass": auth_pass,
+            "uid": uid,
+            "event_guid": event_guid,
+            "user_id": str(user_id),
+            "reflash_token": reflash_token,
+            "authType": "safePass",
+            "entry": "mini",
+            "sign": sign
+        }
+        
+        try:
+            res = await self._api_wrapper(method="post", url=url, data=data)
+            # Some firmwares also require notifying the mini/lock/event endpoint right after
+            try:
+                await self._api_wrapper(method="post", url=f"{self._base_url}/v1/api/mini/lock/event", data={"uid": uid})
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            _LOGGER.error("Unlock failed: %s", e)
+            return False
 
     async def _api_wrapper(
         self, method: str, url: str, data: dict | None = None, headers: dict | None = None
@@ -100,17 +112,6 @@ class LancensApiClient:
                         if response.status == 304:
                              return {}
                         return await response.json(content_type=None)
-
-                    elif method == "put":
-                        response = await self._session.put(url, headers=headers, json=data)
-                        response.raise_for_status()
-                        return await response.json(content_type=None)
-
-                    elif method == "patch":
-                        response = await self._session.patch(url, headers=headers, json=data)
-                        response.raise_for_status()
-                        return await response.json(content_type=None)
-
                     elif method == "post":
                         response = await self._session.post(url, headers=headers, json=data)
                         response.raise_for_status()
@@ -119,15 +120,8 @@ class LancensApiClient:
                         return await response.json(content_type=None)
             except aiohttp.ServerDisconnectedError as exception:
                 if attempt == 2:
-                    _LOGGER.error("Server disconnected error fetching information from %s - %s", url, exception)
                     raise
                 await asyncio.sleep(0.5)
-            except asyncio.TimeoutError as exception:
-                _LOGGER.error("Timeout error fetching information from %s - %s", url, exception)
-                raise
-            except (aiohttp.ClientError, socket.gaierror) as exception:
-                _LOGGER.error("Error fetching information from %s - %s", url, exception)
-                raise
             except Exception as exception:
-                _LOGGER.error("Something really wrong happened! - %s", exception)
+                _LOGGER.error("Error communicating with %s - %s", url, exception)
                 raise

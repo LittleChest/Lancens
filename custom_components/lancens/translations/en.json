@@ -6,7 +6,8 @@
                 "description": "Please enter your Lancens API Token. You can find this in your network traffic logs (header 'token'). Optionally provide UID if known, otherwise we will try to discover it.",
                 "data": {
                     "token": "API Token",
-                    "uid": "Device UID (Optional)"
+                    "uid": "Device UID (Optional)",
+                    "auth_pass": "Unlock Password (Optional)"
                 }
             }
         },

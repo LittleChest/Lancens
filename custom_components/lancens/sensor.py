@@ -16,6 +16,22 @@ from . import LancensDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+# 根据真实抓包数据和时间线推导出的精确事件映射字典
+EVENT_TYPE_MAP = {
+    "02": "指纹解锁冻结",
+    "03": "密码解锁冻结",
+    "14": "已关锁",
+    "15": "开锁成功",  # 具体方式由 content 决定
+    "17": "人脸解锁冻结",
+}
+
+# 开锁方式映射 (当 event_type == "15" 时生效)
+UNLOCK_METHOD_MAP = {
+    "00": "指纹",
+    "08": "人脸",
+    "09": "远程"
+}
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -23,9 +39,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the sensor platform."""
     coordinator: LancensDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    
     async_add_entities([LancensLastEventSensor(coordinator)])
-
 
 class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Lancens Last Event Sensor."""
@@ -47,24 +61,45 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
         if not events or not isinstance(events, dict):
             return "未知"
             
-        event_list = events.get("resultData", {}).get("eventList", [])
+        event_list = events.get("resultData", {}).get("eventList",[])
         if event_list and len(event_list) > 0:
             event = event_list[0]
-
+            event_type_id = str(event.get("type"))
+            
+            # Type 1 永远是门铃呼叫
+            if event_type_id == "1":
+                return "门铃呼叫"
+                
             info_raw = event.get("info")
             if info_raw:
                 try:
+                    # 补齐 Base64 填充并解码
+                    info_raw += "=" * ((4 - len(info_raw) % 4) % 4)
                     decoded_str = base64.b64decode(info_raw).decode("utf-8")
                     info_json = json.loads(decoded_str)
 
-                    device_type = info_json.get("event_device")
-                    event_type = info_json.get("event_type")
-
-                    if device_type == "LOCK_PUSH":
-                        return "门锁推送"
-                    if event_type:
-                        return f"事件代码 {event_type}"
+                    # Type 6 是门锁状态推送
+                    if event_type_id == "6":
+                        device_type = info_json.get("event_device")
+                        event_code = info_json.get("event_type")
+                        content_code = info_json.get("content")
                         
+                        if device_type == "LOCK_PUSH":
+                            # 解析开锁动作 (15)
+                            if event_code == "15":
+                                method = UNLOCK_METHOD_MAP.get(content_code, f"未知方式({content_code})")
+                                user_id = info_json.get("user_id")
+                                user_str = f" (用户{user_id})" if user_id and user_id != "0" else ""
+                                return f"{method}开锁{user_str}"
+                            
+                            # 解析其他已知动作 (冻结、关锁等)
+                            elif event_code in EVENT_TYPE_MAP:
+                                return EVENT_TYPE_MAP[event_code]
+
+                            elif event_code:
+                                return f"门锁推送 - 未知代码 {event_code}"
+                            
+                            return "门锁推送"
                 except Exception as e:
                     _LOGGER.warning("Failed to decode event info: %s", e)
 
@@ -82,7 +117,7 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
         if not events or not isinstance(events, dict):
             return {}
 
-        event_list = events.get("resultData", {}).get("eventList", [])
+        event_list = events.get("resultData", {}).get("eventList",[])
         if event_list and len(event_list) > 0:
             event = event_list[0]
             attrs = {
@@ -94,6 +129,7 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
             info_raw = event.get("info")
             if info_raw:
                 try:
+                    info_raw += "=" * ((4 - len(info_raw) % 4) % 4)
                     decoded_str = base64.b64decode(info_raw).decode("utf-8")
                     attrs["decoded_info"] = json.loads(decoded_str)
                 except:
