@@ -1,74 +1,29 @@
-"""Config flow for Lancens integration."""
-from __future__ import annotations
-
-import logging
-from typing import Any
-
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_TOKEN
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
 from .api import LancensApiClient
-from .const import DOMAIN
-
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_TOKEN): str,
-        vol.Optional("auth_pass"): str,
-    }
-)
-
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    session = async_get_clientsession(hass)
-    client = LancensApiClient(token=data[CONF_TOKEN], session=session)
-
-    try:
-        devices = await client.async_get_data()
-        device_list = devices.get("deviceList",[]) if isinstance(devices, dict) else (devices if isinstance(devices, list) else[])
-        if not device_list or len(device_list) == 0:
-            raise InvalidAuth("账号下未找到任何绑定的设备")
-    except Exception as err:
-        raise InvalidAuth from err
-
-    return {"title": f"叮叮智能"}
-
+from .const import DOMAIN, DEFAULT_NAME
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        if user_input is None:
-            return self.async_show_form(
-                step_id="user", data_schema=STEP_USER_DATA_SCHEMA
-            )
-
+    async def async_step_user(self, user_input=None):
         errors = {}
-        try:
-            info = await validate_input(self.hass, user_input)
-        except CannotConnect:
-            "无法连接到服务器"
-        except InvalidAuth:
-            "令牌已失效"
-        except Exception:
-            "未知错误"
-        else:
-            await self.async_set_unique_id(user_input[CONF_TOKEN][:8])
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(title="叮叮智能", data=user_input)
+        if user_input is not None:
+            try:
+                devices = await LancensApiClient(user_input[CONF_TOKEN], async_get_clientsession(self.hass)).async_get_data()
+                if not (devices.get("deviceList",[]) if isinstance(devices, dict) else (devices if isinstance(devices, list) else[])):
+                    raise Exception("cannot_connect")
+                
+                await self.async_set_unique_id(user_input[CONF_TOKEN][:8])
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=DEFAULT_NAME, data=user_input)
+            except Exception:
+                errors["base"] = "cannot_connect"
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="user", 
+            data_schema=vol.Schema({vol.Required(CONF_TOKEN): str, vol.Optional("auth_pass"): str}), 
+            errors=errors
         )
-
-class CannotConnect(HomeAssistantError):
-    pass
-
-class InvalidAuth(HomeAssistantError):
-    pass

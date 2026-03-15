@@ -1,35 +1,21 @@
-"""Switch platform for Lancens."""
-from __future__ import annotations
-
-from typing import Any
-
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
 from .const import DOMAIN
-from . import LancensDataUpdateCoordinator
+from .entity import LancensEntity
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    coordinators = hass.data[DOMAIN][entry.entry_id]
-    entities =[]
-    for coord in coordinators.values():
-        entities.append(LancensSettingSwitch(coord, "bat_display_en", "电量显示", "mdi:battery"))
-        entities.append(LancensSettingSwitch(coord, "call_screen_on", "呼叫唤醒", "mdi:video"))
-        entities.append(LancensSettingSwitch(coord, "standby_mode", "待机模式", "mdi:power-sleep"))
-        entities.append(LancensWxPushSwitch(coord))
-    
+async def async_setup_entry(hass, entry, async_add_entities):
+    entities = []
+    for c in hass.data[DOMAIN][entry.entry_id].values():
+        entities.extend([
+            LancensSettingSwitch(c, "bat_display_en", "电量显示", "mdi:battery"),
+            LancensSettingSwitch(c, "call_screen_on", "呼叫唤醒", "mdi:video"),
+            LancensSettingSwitch(c, "standby_mode", "待机模式", "mdi:power-sleep"),
+            LancensWxPushSwitch(c)
+        ])
     async_add_entities(entities)
 
-class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
-    def __init__(self, coordinator: LancensDataUpdateCoordinator, key: str, name: str, icon: str) -> None:
+class LancensSettingSwitch(LancensEntity, SwitchEntity):
+    def __init__(self, coordinator, key, name, icon):
         super().__init__(coordinator)
         self._key = key
         self._attr_unique_id = f"{coordinator.uid}_{key}"
@@ -37,93 +23,42 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_icon = icon
 
     @property
-    def device_info(self):
-        info = {
-            "identifiers": {(DOMAIN, self.coordinator.uid)},
-            "name": self.coordinator.device_name,
-            "manufacturer": "深圳市揽胜科技有限公司",
-            "model": self.coordinator.uid
-        }
-        if self.coordinator.sw_version:
-            info["sw_version"] = self.coordinator.sw_version
-        return info
-
-    @property
-    def is_on(self) -> bool | None:
-        if not self.coordinator.data:
-            return None
-        settings_list = self.coordinator.data.get("settings",[])
-        if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
-            return bool(settings_list[0].get(self._key))
+    def is_on(self):
+        if self.coordinator.data and (settings := self.coordinator.data.get("settings")):
+            return bool(settings[0].get(self._key))
         return None
 
-    def _get_current_screenon_timeout(self) -> int:
-        if self.coordinator.data:
-            settings_list = self.coordinator.data.get("settings",[])
-            if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
-                return settings_list[0].get("screenon_timeout", 5)
-        return 5
-
-    async def async_turn_on(self) -> None:
+    async def _async_set_state(self, state):
         try:
             if self._key == "bat_display_en":
-                 await self.coordinator.client.async_set_battery_display(self.coordinator.uid, True)
+                await self.coordinator.client.async_set_battery_display(self.coordinator.uid, state)
             else:
-                 payload = {self._key: 1, "screenon_timeout": self._get_current_screenon_timeout()}
-                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **payload)
+                timeout = self.coordinator.data.get("settings", [{}])[0].get("screenon_timeout", 5) if self.coordinator.data else 5
+                await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: int(state), "screenon_timeout": timeout})
             await self.coordinator.async_request_refresh()
         except Exception as err:
             raise HomeAssistantError(f"无法修改设置: {err}") from err
 
-    async def async_turn_off(self) -> None:
-        try:
-            if self._key == "bat_display_en":
-                 await self.coordinator.client.async_set_battery_display(self.coordinator.uid, False)
-            else:
-                 payload = {self._key: 0, "screenon_timeout": self._get_current_screenon_timeout()}
-                 await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **payload)
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            raise HomeAssistantError(f"无法修改设置: {err}") from err
+    async def async_turn_on(self): await self._async_set_state(True)
+    async def async_turn_off(self): await self._async_set_state(False)
 
-class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
-    def __init__(self, coordinator: LancensDataUpdateCoordinator) -> None:
+class LancensWxPushSwitch(LancensEntity, SwitchEntity):
+    def __init__(self, coordinator):
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.uid}_wx_push"
         self._attr_name = f"{coordinator.device_name} 微信推送"
         self._attr_icon = "mdi:wechat"
 
     @property
-    def device_info(self):
-        info = {
-            "identifiers": {(DOMAIN, self.coordinator.uid)},
-            "name": self.coordinator.device_name,
-            "manufacturer": "深圳市揽胜科技有限公司",
-            "model": self.coordinator.uid
-        }
-        if self.coordinator.sw_version:
-            info["sw_version"] = self.coordinator.sw_version
-        return info
+    def is_on(self):
+        return bool(self.coordinator.data.get("wx_push", {}).get("wx_push")) if self.coordinator.data else None
 
-    @property
-    def is_on(self) -> bool | None:
-        if not self.coordinator.data:
-            return None
-        data = self.coordinator.data.get("wx_push")
-        if not data or not isinstance(data, dict):
-            return None
-        return bool(data.get("wx_push"))
-
-    async def async_turn_on(self) -> None:
+    async def _async_set_state(self, state):
         try:
-            await self.coordinator.client.async_set_wx_push(self.coordinator.uid, True)
+            await self.coordinator.client.async_set_wx_push(self.coordinator.uid, state)
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"无法修改设置: {err}")
+            raise HomeAssistantError(f"无法修改设置: {err}") from err
 
-    async def async_turn_off(self) -> None:
-        try:
-            await self.coordinator.client.async_set_wx_push(self.coordinator.uid, False)
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            raise HomeAssistantError(f"无法修改设置: {err}")
+    async def async_turn_on(self): await self._async_set_state(True)
+    async def async_turn_off(self): await self._async_set_state(False)
