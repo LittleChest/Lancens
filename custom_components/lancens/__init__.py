@@ -29,7 +29,6 @@ PLATFORMS: list[Platform] =[
 ]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Lancens from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     token = entry.data[CONF_TOKEN]
@@ -68,7 +67,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
     coordinators = hass.data[DOMAIN].get(entry.entry_id, {})
     for coord in coordinators.values():
         if getattr(coord, "push_task", None):
@@ -96,9 +94,9 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         self.client = client
         self.uid = uid
         self.device_name = device_name
-        self.event_interval = 3  # 固定高频事件轮询时间为 3 秒
         self.data = {}
         self.latest_push_data = {}
+        self.sw_version = None
         
         self.doorbell_window_end = 0.0
         
@@ -113,11 +111,9 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def async_setup(self):
-        """Setup background event poller."""
         self.event_task = self.hass.loop.create_task(self._async_event_poller())
 
     def trigger_doorbell_window(self):
-        """收到门铃事件时调用，创建 60 秒窗口期并拉取凭证"""
         _LOGGER.info("[%s] 收到门铃呼叫！开启 60 秒开锁窗口期，开始获取安全凭证", self.device_name)
         self.doorbell_window_end = time.time() + 60
         self.latest_push_data = {}
@@ -126,8 +122,14 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
             self.push_task.cancel()
         self.push_task = self.hass.loop.create_task(self._async_push_listener())
 
+    def close_doorbell_window(self):
+        _LOGGER.info("[%s] 远程开锁成功，立即结束窗口期、销毁现有凭证并终止长连接轮询", self.device_name)
+        self.doorbell_window_end = 0.0
+        self.latest_push_data = {}
+        if self.push_task and not self.push_task.done():
+            self.push_task.cancel()
+
     async def _async_push_listener(self):
-        """窗口期内的凭证长轮询任务"""
         url = f"{self.client._base_url}/v1/api/mini/push/event/new"
         headers = {"token": self.client._token, "Content-Type": "application/json"}
         payload = {"event_guid": ""}
@@ -140,23 +142,23 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                         if data and "reflash_token" in data:
                             data["received_time"] = time.time()
                             self.latest_push_data = data
-                            _LOGGER.debug("[%s] 成功获取到开锁凭证！将在窗口期内待命...", self.device_name)
-                            break 
+                            _LOGGER.info("[%s] 成功获取到开锁凭证！将继续监听以确保使用最新的凭证...", self.device_name)
+                    elif response.status == 204:
+                        pass
             except asyncio.CancelledError:
                 break
             except Exception:
                 await asyncio.sleep(2)
 
-        if time.time() >= self.doorbell_window_end:
-            _LOGGER.info("[%s] 60 秒开锁窗口期已结束，停止长轮询并作废凭证。", self.device_name)
+        if time.time() >= self.doorbell_window_end and self.doorbell_window_end > 0.0:
+            _LOGGER.info("[%s] 60 秒开锁窗口期已自然结束，停止轮询并作废凭证。", self.device_name)
             self.latest_push_data = {}
 
     async def _async_event_poller(self):
-        """独立的高频事件轮询任务 (3秒)"""
         await asyncio.sleep(2)
         while True:
             try:
-                await asyncio.sleep(self.event_interval)
+                await asyncio.sleep(1) # 严格控制每1秒轮询拉取一次最新事件
                 events = await self.client.async_get_events(self.uid)
                 if self.data is not None:
                     old_events = self.data.get("events", {})
@@ -167,7 +169,7 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                     new_id = new_list[0].get("id") if new_list else None
                     
                     if old_id != new_id:
-                        _LOGGER.debug("[%s] 轮询到新事件！", self.device_name)
+                        _LOGGER.debug("[%s] 1秒轮询捕获到新事件！", self.device_name)
                         
                         if new_list:
                             latest_event = new_list[0]
@@ -183,12 +185,19 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                 pass
 
     async def _async_update_data(self):
-        """HA 常规基础数据拉取 (30s)"""
         try:
             settings = await self.client.async_get_settings(self.uid)
             wx_push = await self.client.async_get_wx_push_status(self.uid)
             events = self.data.get("events", {}) if self.data else await self.client.async_get_events(self.uid)
             
+            if not self.sw_version:
+                try:
+                    version_data = await self.client.async_get_version(self.uid)
+                    if version_data and isinstance(version_data, list) and len(version_data) > 0:
+                        self.sw_version = version_data[0].get("current_version")
+                except Exception as e:
+                    _LOGGER.warning("Failed to fetch firmware version: %s", e)
+
             return {
                 "events": events,
                 "settings": settings,

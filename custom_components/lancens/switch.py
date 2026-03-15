@@ -18,9 +18,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the switch platform."""
     coordinators = hass.data[DOMAIN][entry.entry_id]
-    
     entities =[]
     for coord in coordinators.values():
         entities.append(LancensSettingSwitch(coord, "bat_display_en", "电量显示", "mdi:battery"))
@@ -30,17 +28,8 @@ async def async_setup_entry(
     
     async_add_entities(entities)
 
-
 class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
-    """Switch for device settings."""
-
-    def __init__(
-        self,
-        coordinator: LancensDataUpdateCoordinator,
-        key: str,
-        name: str,
-        icon: str,
-    ) -> None:
+    def __init__(self, coordinator: LancensDataUpdateCoordinator, key: str, name: str, icon: str) -> None:
         super().__init__(coordinator)
         self._key = key
         self._attr_unique_id = f"{coordinator.uid}_{key}"
@@ -49,22 +38,23 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def device_info(self):
-        return {
+        info = {
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
-            "manufacturer": "叮叮智能",
+            "manufacturer": "深圳市揽胜科技有限公司",
             "model": "智能门锁"
         }
+        if self.coordinator.sw_version:
+            info["sw_version"] = self.coordinator.sw_version
+        return info
 
     @property
     def is_on(self) -> bool | None:
         if not self.coordinator.data:
             return None
-            
         settings_list = self.coordinator.data.get("settings",[])
         if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
-            val = settings_list[0].get(self._key)
-            return bool(val)
+            return bool(settings_list[0].get(self._key))
         return None
 
     def _get_current_screenon_timeout(self) -> int:
@@ -97,8 +87,6 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
             raise HomeAssistantError(f"Failed to turn off: {err}") from err
 
 class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
-    """Switch for WX Push."""
-
     def __init__(self, coordinator: LancensDataUpdateCoordinator) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.uid}_wx_push"
@@ -107,22 +95,23 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def device_info(self):
-        return {
+        info = {
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
-            "manufacturer": "叮叮智能",
+            "manufacturer": "深圳市揽胜科技有限公司",
             "model": "智能门锁"
         }
+        if self.coordinator.sw_version:
+            info["sw_version"] = self.coordinator.sw_version
+        return info
 
     @property
     def is_on(self) -> bool | None:
         if not self.coordinator.data:
             return None
-            
         data = self.coordinator.data.get("wx_push")
         if not data or not isinstance(data, dict):
             return None
-            
         return bool(data.get("wx_push"))
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -130,11 +119,11 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
             await self.coordinator.client.async_set_wx_push(self.coordinator.uid, True)
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"Failed to turn on: {err}") from err
+            raise HomeAssistantError(f"Failed to turn on: {err}")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         try:
             await self.coordinator.client.async_set_wx_push(self.coordinator.uid, False)
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"Failed to turn off: {err}") from err
+            raise HomeAssistantError(f"Failed to turn off: {err}")

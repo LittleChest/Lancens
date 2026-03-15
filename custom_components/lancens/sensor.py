@@ -17,12 +17,12 @@ from . import LancensDataUpdateCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 EVENT_TYPE_MAP = {
-    "02": "指纹",
-    "03": "密码",
-    "04": "卡片",
+    "02": "指纹解锁冻结",
+    "03": "密码解锁冻结",
+    "04": "卡片解锁冻结",
     "14": "已关锁",
     "15": "开锁成功", 
-    "17": "人脸",
+    "17": "人脸解锁冻结",
 }
 
 UNLOCK_METHOD_MAP = {
@@ -50,12 +50,15 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def device_info(self):
-        return {
+        info = {
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
-            "manufacturer": "叮叮智能",
+            "manufacturer": "深圳市揽胜科技有限公司",
             "model": "智能门锁"
         }
+        if self.coordinator.sw_version:
+            info["sw_version"] = self.coordinator.sw_version
+        return info
 
     @property
     def native_value(self) -> str | None:
@@ -95,7 +98,7 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
                             elif event_code == "14":
                                 return "已关锁"
                             else:
-                                reason = EVENT_TYPE_MAP.get(event_code, f"未知代码 {event_code}")
+                                reason = EVENT_TYPE_MAP.get(event_code, f"代码 {event_code}")
                                 return f"门锁冻结 - {reason}"
                 except Exception:
                     pass

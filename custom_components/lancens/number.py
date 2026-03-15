@@ -17,7 +17,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinators = hass.data[DOMAIN][entry.entry_id]
-    
     entities =[]
     for coord in coordinators.values():
         entities.append(LancensNumber(
@@ -54,18 +53,20 @@ class LancensNumber(CoordinatorEntity, NumberEntity):
 
     @property
     def device_info(self):
-        return {
+        info = {
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
-            "manufacturer": "叮叮智能",
+            "manufacturer": "深圳市揽胜科技有限公司",
             "model": "智能门锁"
         }
+        if self.coordinator.sw_version:
+            info["sw_version"] = self.coordinator.sw_version
+        return info
 
     @property
     def native_value(self) -> float | None:
         if not self.coordinator.data:
             return None
-            
         settings_list = self.coordinator.data.get("settings",[])
         if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
             return settings_list[0].get(self._key)

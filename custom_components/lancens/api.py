@@ -25,7 +25,6 @@ class LancensApiClient:
         self._base_url = "https://chniot.lancens.com:6448"
 
     async def async_get_data(self) -> dict:
-        """Get data from the API."""
         return await self._api_wrapper(
             method="get", url=self._base_url + "/v1/api/user/mini/all/device/new"
         )
@@ -38,6 +37,11 @@ class LancensApiClient:
 
     async def async_get_settings(self, uid: str) -> list:
         url = f"{self._base_url}/v1/api/device/screen/light?uid={uid}&entry=mini"
+        return await self._api_wrapper(method="get", url=url)
+
+    async def async_get_version(self, uid: str) -> list:
+        """Get firmware version info."""
+        url = f"{self._base_url}/v1/api/mini/upgrad/version?uid={uid}"
         return await self._api_wrapper(method="get", url=url)
 
     async def async_set_screen_settings(self, uid: str, **kwargs) -> bool:
@@ -61,7 +65,6 @@ class LancensApiClient:
         return await self._api_wrapper(method="post", url=url, data=data)
 
     async def async_unlock(self, uid: str, event_guid: str, user_id: str, reflash_token: str, auth_pass: str) -> bool:
-        """Send remote unlock request."""
         url = f"{self._base_url}/v1/api/server/open/lock"
         sign = "92efcc26007c2faa730d212cb4e7c57a7ee821dd" 
         data = {
@@ -81,7 +84,6 @@ class LancensApiClient:
             res = await self._api_wrapper(method="post", url=url, data=data)
             _LOGGER.info("API 远程开锁服务器响应结果: %s", res)
             
-            # Post-notify
             try:
                 await self._api_wrapper(method="post", url=f"{self._base_url}/v1/api/mini/lock/event", data={"uid": uid})
                 _LOGGER.info("API 开锁后状态通知成功发送")

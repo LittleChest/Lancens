@@ -42,12 +42,15 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
 
     @property
     def device_info(self):
-        return {
+        info = {
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
-            "manufacturer": "叮叮智能",
+            "manufacturer": "深圳市揽胜科技有限公司",
             "model": "智能门锁"
         }
+        if self.coordinator.sw_version:
+            info["sw_version"] = self.coordinator.sw_version
+        return info
 
     @property
     def image_url(self) -> str | None:
@@ -58,7 +61,7 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
         if not events or not isinstance(events, dict):
              return None
 
-        event_list = events.get("resultData", {}).get("eventList", [])
+        event_list = events.get("resultData", {}).get("eventList",[])
         if event_list and len(event_list) > 0:
             event = event_list[0]
             raw_url = event.get("img") or event.get("file_path") or event.get("url")
@@ -72,9 +75,7 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
                     decoded_bytes = base64.b64decode(raw_url)
                     return decoded_bytes.decode("utf-8")
                 except (binascii.Error, UnicodeDecodeError):
-                    _LOGGER.warning("Image URL decode failed, using raw value")
                     return raw_url
-                    
         return None
     
     @property
@@ -92,7 +93,6 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
         url = self.image_url
         if not url:
             return None
-            
         try:
             session = async_get_clientsession(self.hass)
             async with session.get(url, headers=IMAGE_HEADERS, timeout=15) as response:
