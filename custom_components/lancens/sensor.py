@@ -4,8 +4,8 @@ from homeassistant.components.sensor import SensorEntity
 from .const import DOMAIN
 from .entity import LancensEntity
 
-EVENT_TYPE_MAP = {"02": "指纹", "03": "密码", "04": "卡片", "14": "已关锁", "15": "开锁成功", "17": "人脸"}
-UNLOCK_METHOD_MAP = {"00": "指纹", "01": "密码", "08": "人脸", "09": "远程"}
+EVENT_TYPE_MAP = {"02": "指纹", "03": "密码", "04": "卡片", "14": "已关锁", "15": "开锁成功", "17": "人脸或掌静脉"}
+UNLOCK_METHOD_MAP = {"00": "指纹", "01": "密码", "02": "卡片", "06": "掌静脉", "08": "人脸", "09": "远程"}
 
 async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([LancensLastEventSensor(c) for c in hass.data[DOMAIN][entry.entry_id].values()])
