@@ -3,11 +3,10 @@
         "step": {
             "user": {
                 "title": "Connect to Lancens",
-                "description": "Please enter your Lancens API Token. You can find this in your network traffic logs (header 'token'). Optionally provide UID if known, otherwise we will try to discover it.",
+                "description": "Please enter your Lancens API Token. Security password is required for remote unlock.",
                 "data": {
                     "token": "API Token",
-                    "uid": "Device UID (Optional)",
-                    "auth_pass": "Unlock Password (Optional)"
+                    "auth_pass": "Security Password (Optional)"
                 }
             }
         },

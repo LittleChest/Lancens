@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .api import LancensApiClient
-from .const import DOMAIN, CONF_TOKEN, CONF_EVENT_INTERVAL
+from .const import DOMAIN, CONF_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +33,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     token = entry.data[CONF_TOKEN]
-    event_interval = entry.data.get(CONF_EVENT_INTERVAL, 1)
 
     session = async_get_clientsession(hass)
     client = LancensApiClient(token=token, session=session)
@@ -54,7 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         name = dev.get("name", "智能锁")
         if uid:
             _LOGGER.info("发现叮叮设备: %s (UID: %s)", name, uid)
-            coord = LancensDataUpdateCoordinator(hass, client, str(uid), name, event_interval)
+            coord = LancensDataUpdateCoordinator(hass, client, str(uid), name)
             await coord.async_setup()
             await coord.async_config_entry_first_refresh()
             coordinators[str(uid)] = coord
@@ -92,17 +91,16 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         client: LancensApiClient,
         uid: str,
         device_name: str,
-        event_interval: int,
     ) -> None:
         """Initialize."""
         self.client = client
         self.uid = uid
         self.device_name = device_name
-        self.event_interval = event_interval
+        self.event_interval = 3  # 固定高频事件轮询时间为 3 秒
         self.data = {}
         self.latest_push_data = {}
         
-        self.doorbell_window_end = 0.0  # 60秒窗口期截止时间
+        self.doorbell_window_end = 0.0
         
         self.push_task: asyncio.Task | None = None
         self.event_task: asyncio.Task | None = None
@@ -115,7 +113,7 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def async_setup(self):
-        """Setup background event poller. Push poller is started on demand."""
+        """Setup background event poller."""
         self.event_task = self.hass.loop.create_task(self._async_event_poller())
 
     def trigger_doorbell_window(self):
@@ -129,33 +127,32 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         self.push_task = self.hass.loop.create_task(self._async_push_listener())
 
     async def _async_push_listener(self):
-        """窗口期内的凭证轮询任务"""
+        """窗口期内的凭证长轮询任务"""
         url = f"{self.client._base_url}/v1/api/mini/push/event/new"
         headers = {"token": self.client._token, "Content-Type": "application/json"}
         payload = {"event_guid": ""}
         
         while time.time() < self.doorbell_window_end:
             try:
-                # 阻塞长连接，若期间超时或获取到内容则返回
                 async with self.client._session.post(url, headers=headers, json=payload, timeout=65) as response:
                     if response.status == 200:
                         data = await response.json(content_type=None)
                         if data and "reflash_token" in data:
+                            data["received_time"] = time.time()
                             self.latest_push_data = data
-                            _LOGGER.info("[%s] 成功获取到开锁凭证！将在窗口期内待命...", self.device_name)
-                            break  # 拿到了凭证就退出轮询
+                            _LOGGER.debug("[%s] 成功获取到开锁凭证！将在窗口期内待命...", self.device_name)
+                            break 
             except asyncio.CancelledError:
                 break
             except Exception:
                 await asyncio.sleep(2)
 
-        # 无论拿到与否，如果当前时间已经过了窗口期，则彻底作废清空
         if time.time() >= self.doorbell_window_end:
-            _LOGGER.info("[%s] 60 秒开锁窗口期已结束，停止轮询并作废凭证。", self.device_name)
+            _LOGGER.info("[%s] 60 秒开锁窗口期已结束，停止长轮询并作废凭证。", self.device_name)
             self.latest_push_data = {}
 
     async def _async_event_poller(self):
-        """高频事件轮询任务"""
+        """独立的高频事件轮询任务 (3秒)"""
         await asyncio.sleep(2)
         while True:
             try:
@@ -164,7 +161,7 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                 if self.data is not None:
                     old_events = self.data.get("events", {})
                     old_list = old_events.get("resultData", {}).get("eventList",[]) if isinstance(old_events, dict) else[]
-                    new_list = events.get("resultData", {}).get("eventList",[]) if isinstance(events, dict) else []
+                    new_list = events.get("resultData", {}).get("eventList",[]) if isinstance(events, dict) else[]
                     
                     old_id = old_list[0].get("id") if old_list else None
                     new_id = new_list[0].get("id") if new_list else None
@@ -172,7 +169,6 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                     if old_id != new_id:
                         _LOGGER.debug("[%s] 轮询到新事件！", self.device_name)
                         
-                        # 检测是否是门铃呼叫 (Type 1)，若是，触发 60 秒长连接窗口期
                         if new_list:
                             latest_event = new_list[0]
                             if str(latest_event.get("type")) == "1":
@@ -187,7 +183,7 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                 pass
 
     async def _async_update_data(self):
-        """定时参数拉取 (30s)"""
+        """HA 常规基础数据拉取 (30s)"""
         try:
             settings = await self.client.async_get_settings(self.uid)
             wx_push = await self.client.async_get_wx_push_status(self.uid)

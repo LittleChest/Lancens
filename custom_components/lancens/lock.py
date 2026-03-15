@@ -113,10 +113,16 @@ class LancensLock(CoordinatorEntity, LockEntity):
                     
                     device_type = info_json.get("event_device")
                     event_code = info_json.get("event_type")
+                    content_code = info_json.get("content")
                     
                     if device_type == "LOCK_PUSH":
                         if event_code == "15":
-                            self._trigger_state_sequence("unlock_success")
+                            # 判断是否为远程开锁(09)，如果是，跳过本地事件触发，交由点击按钮的协程自行处理以防冲突
+                            if content_code == "09":
+                                pass
+                            else:
+                                # 除远程开锁外的其它物理开锁方式
+                                self._trigger_state_sequence("event_unlock")
                         elif event_code == "14":
                             self._trigger_state_sequence("locking")
                         else:
@@ -131,8 +137,17 @@ class LancensLock(CoordinatorEntity, LockEntity):
 
     async def _async_state_sequence(self, seq_type: str):
         try:
-            if seq_type == "unlock_success":
-                # 获取到成功开门：正在打开1秒 已打开2秒 正在锁定1秒
+            if seq_type == "event_unlock":
+                # 除了远程开锁外的物理开锁：仅正在解锁1秒，然后变回已锁定
+                self._lock_state = "opening"
+                self.async_write_ha_state()
+                await asyncio.sleep(1)
+                
+                self._lock_state = "locked"
+                self.async_write_ha_state()
+
+            elif seq_type == "remote_unlock":
+                # 远程开锁且 API 返回 200：正在解锁1秒 -> 已解锁2秒 -> 正在锁定1秒
                 self._lock_state = "unlocking"
                 self.async_write_ha_state()
                 await asyncio.sleep(1)
@@ -149,19 +164,18 @@ class LancensLock(CoordinatorEntity, LockEntity):
                 self.async_write_ha_state()
                 
             elif seq_type == "jammed":
-                # 被冻结：卡住 20 秒
+                # 卡住(冻结)：显示 17 秒 (20秒 - 3秒轮询时间)
                 self._lock_state = "jammed"
                 self.async_write_ha_state()
-                await asyncio.sleep(20)
+                await asyncio.sleep(17)
                 
                 self._lock_state = "locked"
                 self.async_write_ha_state()
                 
             elif seq_type == "locking":
-                # 收到已锁定：正在锁定 2.5 秒
                 self._lock_state = "locking"
                 self.async_write_ha_state()
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(1)
                 
                 self._lock_state = "locked"
                 self.async_write_ha_state()
@@ -176,33 +190,29 @@ class LancensLock(CoordinatorEntity, LockEntity):
         self.async_write_ha_state()
 
     async def async_unlock(self, **kwargs: Any) -> None:
-        """从前端发起远程开锁命令"""
+        _LOGGER.info("====== 收到 HA 前端开锁请求，创建 60 秒等候队列 ======")
         if not self._auth_pass:
+            _LOGGER.error("开锁中止：未在配置流中填写 auth_pass")
             raise HomeAssistantError("未配置安全密码 (auth_pass)，无法执行远程开锁。请重新配置集成。")
 
-        # 判断窗口期是否过期或根本没触发
         if time.time() > self.coordinator.doorbell_window_end:
             _LOGGER.error("拒绝开锁：没有收到门铃呼叫或窗口期已超时！")
             raise HomeAssistantError("拒绝开锁：未收到门铃呼叫，或 60 秒安全窗口已超时失效。")
 
         _LOGGER.info("====== 允许下发，进入 60 秒凭证轮询等待队列 ======")
 
-        # 中断可能正在运行的其它动画协程
         if self._state_task:
             self._state_task.cancel()
         
-        # 立即将 UI 置为解锁中并维持
+        # 持续维持 UI 在“正在解锁...”状态
         self._lock_state = "unlocking"
         self.async_write_ha_state()
 
-        # 启动后台轮询执行任务，立即返回让前端顺畅显示动画
         self._state_task = self.hass.async_create_task(self._async_wait_and_unlock())
 
     async def _async_wait_and_unlock(self):
-        """后台窗口期轮询拦截"""
         try:
             success = False
-            # 持续轮询直至超过窗口期截止时间
             while time.time() < self.coordinator.doorbell_window_end:
                 push_data = self.coordinator.latest_push_data
                 
@@ -219,29 +229,14 @@ class LancensLock(CoordinatorEntity, LockEntity):
                         reflash_token=reflash_token,
                         auth_pass=self._auth_pass
                     )
-                    # 清空本次成功拦截到的凭证防重用
                     self.coordinator.latest_push_data = {}
                     break
                 
-                # 每隔 1 秒进行检查
                 await asyncio.sleep(1)
 
             if success:
-                _LOGGER.info("开锁成功！播放成功状态帧。")
-                # 远程开锁：正在解锁1秒 已解锁2秒 正在锁定1秒 (前置已由 async_unlock 触发，此处补齐)
-                await asyncio.sleep(1)
-                
-                self._lock_state = "unlocked"
-                self.async_write_ha_state()
-                await asyncio.sleep(2)
-                
-                self._lock_state = "locking"
-                self.async_write_ha_state()
-                await asyncio.sleep(1)
-                
-                self._lock_state = "locked"
-                self.async_write_ha_state()
-                
+                _LOGGER.info("API 返回200！开锁指令下发成功！立即触发远程开锁动画！")
+                self._trigger_state_sequence("remote_unlock")
                 await self.coordinator.async_request_refresh()
             else:
                 _LOGGER.error("开锁失败！窗口期耗尽或密码验证未通过。")

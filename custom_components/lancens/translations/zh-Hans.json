@@ -3,10 +3,9 @@
         "step": {
             "user": {
                 "title": "连接到叮叮智能",
-                "description": "请输入您的 API Token。如果知道设备 UID 可选填，否则将尝试自动发现。安全密码用于远程开锁，如果不配置则无法使用开锁功能。",
+                "description": "请输入您的 API Token。安全密码用于远程开锁，如果不配置则无法使用开锁功能。",
                 "data": {
                     "token": "API Token",
-                    "uid": "设备 UID (可选)",
                     "auth_pass": "安全密码 (用于远程开锁，可选)"
                 }
             }

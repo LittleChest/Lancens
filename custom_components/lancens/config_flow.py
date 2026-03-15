@@ -14,7 +14,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import LancensApiClient
-from .const import DOMAIN, CONF_EVENT_INTERVAL
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,7 +22,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_TOKEN): str,
         vol.Optional("auth_pass"): str,
-        vol.Optional(CONF_EVENT_INTERVAL, default=1): int,
     }
 )
 
