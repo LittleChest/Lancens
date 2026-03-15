@@ -55,7 +55,13 @@ class LancensWxPushSwitch(LancensEntity, SwitchEntity):
 
     async def _async_set_state(self, state):
         try:
-            await self.coordinator.client.async_set_wx_push(self.coordinator.uid, state)
+            if self._key == "bat_display_en":
+                await self.coordinator.client.async_set_battery_display(self.coordinator.uid, state)
+            else:
+                settings = self.coordinator.data.get("settings") if self.coordinator.data else []
+                timeout = settings[0].get("screenon_timeout", 5) if settings else 5
+                
+                await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: int(state), "screenon_timeout": timeout})
             await self.coordinator.async_request_refresh()
         except Exception as err:
             raise HomeAssistantError(f"无法修改设置: {err}") from err

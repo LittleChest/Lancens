@@ -107,7 +107,7 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                 self.client.async_get_settings(self.uid),
                 self.client.async_get_wx_push_status(self.uid)
             )
-            events = self.data.get("events") or await self.client.async_get_events(self.uid)
+            events = (self.data.get("events") if self.data else None) or await self.client.async_get_events(self.uid)
             if not self.sw_version:
                 try:
                     if ver_data := await self.client.async_get_version(self.uid):
