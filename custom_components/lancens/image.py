@@ -1,8 +1,6 @@
-"""Image platform for Lancens."""
 from __future__ import annotations
 
 import base64
-import binascii
 import logging
 
 from homeassistant.components.image import ImageEntity
@@ -19,7 +17,6 @@ from . import LancensDataUpdateCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 IMAGE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541739) XWEB/18955",
     "Referer": "https://servicewechat.com/wx70441541e13a229d/87/page-frame.html"
 }
 
@@ -46,7 +43,7 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
             "manufacturer": "深圳市揽胜科技有限公司",
-            "model": "智能门锁"
+            "model": self.coordinator.uid
         }
         if self.coordinator.sw_version:
             info["sw_version"] = self.coordinator.sw_version
@@ -68,13 +65,12 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
             
             if not raw_url:
                 return None
-            if raw_url.startswith("http"):
-                return raw_url
             else:
                 try:
                     decoded_bytes = base64.b64decode(raw_url)
                     return decoded_bytes.decode("utf-8")
-                except (binascii.Error, UnicodeDecodeError):
+                except Exception as err:
+                    _LOGGER.error("无法解析图片: %s", err)
                     return raw_url
         return None
     
@@ -95,9 +91,9 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
             return None
         try:
             session = async_get_clientsession(self.hass)
-            async with session.get(url, headers=IMAGE_HEADERS, timeout=15) as response:
+            async with session.get(url, headers=IMAGE_HEADERS, timeout=5) as response:
                 response.raise_for_status()
                 return await response.read()
         except Exception as err:
-            _LOGGER.error("Error downloading image: %s", err)
+            _LOGGER.error("无法下载图片: %s", err)
             return None

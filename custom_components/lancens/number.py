@@ -57,7 +57,7 @@ class LancensNumber(CoordinatorEntity, NumberEntity):
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
             "manufacturer": "深圳市揽胜科技有限公司",
-            "model": "智能门锁"
+            "model": self.coordinator.uid
         }
         if self.coordinator.sw_version:
             info["sw_version"] = self.coordinator.sw_version
@@ -77,4 +77,4 @@ class LancensNumber(CoordinatorEntity, NumberEntity):
             await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: int(value)})
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"Failed to set value: {err}") from err
+            raise HomeAssistantError(f"无法修改设置: {err}") from err

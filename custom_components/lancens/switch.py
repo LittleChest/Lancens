@@ -42,7 +42,7 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
             "manufacturer": "深圳市揽胜科技有限公司",
-            "model": "智能门锁"
+            "model": self.coordinator.uid
         }
         if self.coordinator.sw_version:
             info["sw_version"] = self.coordinator.sw_version
@@ -64,7 +64,7 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
                 return settings_list[0].get("screenon_timeout", 5)
         return 5
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
+    async def async_turn_on(self) -> None:
         try:
             if self._key == "bat_display_en":
                  await self.coordinator.client.async_set_battery_display(self.coordinator.uid, True)
@@ -73,9 +73,9 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
                  await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **payload)
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"Failed to turn on: {err}") from err
+            raise HomeAssistantError(f"无法修改设置: {err}") from err
 
-    async def async_turn_off(self, **kwargs: Any) -> None:
+    async def async_turn_off(self) -> None:
         try:
             if self._key == "bat_display_en":
                  await self.coordinator.client.async_set_battery_display(self.coordinator.uid, False)
@@ -84,7 +84,7 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
                  await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **payload)
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"Failed to turn off: {err}") from err
+            raise HomeAssistantError(f"无法修改设置: {err}") from err
 
 class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(self, coordinator: LancensDataUpdateCoordinator) -> None:
@@ -99,7 +99,7 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
             "manufacturer": "深圳市揽胜科技有限公司",
-            "model": "智能门锁"
+            "model": self.coordinator.uid
         }
         if self.coordinator.sw_version:
             info["sw_version"] = self.coordinator.sw_version
@@ -114,16 +114,16 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
             return None
         return bool(data.get("wx_push"))
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
+    async def async_turn_on(self) -> None:
         try:
             await self.coordinator.client.async_set_wx_push(self.coordinator.uid, True)
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"Failed to turn on: {err}")
+            raise HomeAssistantError(f"无法修改设置: {err}")
 
-    async def async_turn_off(self, **kwargs: Any) -> None:
+    async def async_turn_off(self) -> None:
         try:
             await self.coordinator.client.async_set_wx_push(self.coordinator.uid, False)
             await self.coordinator.async_request_refresh()
         except Exception as err:
-            raise HomeAssistantError(f"Failed to turn off: {err}")
+            raise HomeAssistantError(f"无法修改设置: {err}")

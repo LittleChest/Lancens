@@ -14,15 +14,13 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from . import LancensDataUpdateCoordinator
 
-_LOGGER = logging.getLogger(__name__)
-
 EVENT_TYPE_MAP = {
-    "02": "指纹解锁冻结",
-    "03": "密码解锁冻结",
-    "04": "卡片解锁冻结",
+    "02": "指纹",
+    "03": "密码",
+    "04": "卡片",
     "14": "已关锁",
     "15": "开锁成功", 
-    "17": "人脸解锁冻结",
+    "17": "人脸",
 }
 
 UNLOCK_METHOD_MAP = {
@@ -54,7 +52,7 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
             "manufacturer": "深圳市揽胜科技有限公司",
-            "model": "智能门锁"
+            "model": self.coordinator.uid
         }
         if self.coordinator.sw_version:
             info["sw_version"] = self.coordinator.sw_version
@@ -99,7 +97,7 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
                                 return "已关锁"
                             else:
                                 reason = EVENT_TYPE_MAP.get(event_code, f"代码 {event_code}")
-                                return f"门锁冻结 - {reason}"
+                                return f"门锁已冻结 - {reason}"
                 except Exception:
                     pass
 
