@@ -17,12 +17,12 @@ from . import LancensDataUpdateCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 EVENT_TYPE_MAP = {
-    "02": "指纹解锁冻结",
-    "03": "密码解锁冻结",
-    "04": "卡片解锁冻结",
+    "02": "指纹",
+    "03": "密码",
+    "04": "卡片",
     "14": "已关锁",
     "15": "开锁成功", 
-    "17": "人脸解锁冻结",
+    "17": "人脸",
 }
 
 UNLOCK_METHOD_MAP = {
@@ -88,14 +88,14 @@ class LancensLastEventSensor(CoordinatorEntity, SensorEntity):
                         
                         if device_type == "LOCK_PUSH":
                             if event_code == "15":
-                                method = UNLOCK_METHOD_MAP.get(content_code, f"未知方式({content_code})")
+                                method = UNLOCK_METHOD_MAP.get(content_code, f"未知({content_code})")
                                 user_id = info_json.get("user_id")
                                 user_str = f" (用户{user_id})" if user_id and user_id != "0" else ""
                                 return f"{method}开锁{user_str}"
                             elif event_code == "14":
                                 return "已关锁"
                             else:
-                                reason = EVENT_TYPE_MAP.get(event_code, f"代码 {event_code}")
+                                reason = EVENT_TYPE_MAP.get(event_code, f"未知代码 {event_code}")
                                 return f"门锁冻结 - {reason}"
                 except Exception:
                     pass

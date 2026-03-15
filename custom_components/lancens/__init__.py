@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import timedelta
 import logging
 
@@ -61,9 +62,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not coordinators:
         return False
 
-    # 保存由 uid 映射的多个 coordinator
     hass.data[DOMAIN][entry.entry_id] = coordinators
-
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -103,6 +102,8 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         self.data = {}
         self.latest_push_data = {}
         
+        self.doorbell_window_end = 0.0  # 60秒窗口期截止时间
+        
         self.push_task: asyncio.Task | None = None
         self.event_task: asyncio.Task | None = None
         
@@ -114,34 +115,47 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def async_setup(self):
-        """Setup background tasks."""
-        self.push_task = self.hass.loop.create_task(self._async_push_listener())
+        """Setup background event poller. Push poller is started on demand."""
         self.event_task = self.hass.loop.create_task(self._async_event_poller())
 
+    def trigger_doorbell_window(self):
+        """收到门铃事件时调用，创建 60 秒窗口期并拉取凭证"""
+        _LOGGER.info("[%s] 收到门铃呼叫！开启 60 秒开锁窗口期，开始获取安全凭证", self.device_name)
+        self.doorbell_window_end = time.time() + 60
+        self.latest_push_data = {}
+        
+        if self.push_task and not self.push_task.done():
+            self.push_task.cancel()
+        self.push_task = self.hass.loop.create_task(self._async_push_listener())
+
     async def _async_push_listener(self):
-        """Long polling for push events to capture unlock credentials."""
+        """窗口期内的凭证轮询任务"""
         url = f"{self.client._base_url}/v1/api/mini/push/event/new"
         headers = {"token": self.client._token, "Content-Type": "application/json"}
         payload = {"event_guid": ""}
         
-        while True:
+        while time.time() < self.doorbell_window_end:
             try:
+                # 阻塞长连接，若期间超时或获取到内容则返回
                 async with self.client._session.post(url, headers=headers, json=payload, timeout=65) as response:
                     if response.status == 200:
                         data = await response.json(content_type=None)
                         if data and "reflash_token" in data:
                             self.latest_push_data = data
-                            _LOGGER.debug("[%s] 收到最新长连接推送凭证: %s", self.device_name, data)
-                            await self.async_request_refresh()
-                    elif response.status == 204:
-                        pass
+                            _LOGGER.info("[%s] 成功获取到开锁凭证！将在窗口期内待命...", self.device_name)
+                            break  # 拿到了凭证就退出轮询
             except asyncio.CancelledError:
                 break
             except Exception:
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
+
+        # 无论拿到与否，如果当前时间已经过了窗口期，则彻底作废清空
+        if time.time() >= self.doorbell_window_end:
+            _LOGGER.info("[%s] 60 秒开锁窗口期已结束，停止轮询并作废凭证。", self.device_name)
+            self.latest_push_data = {}
 
     async def _async_event_poller(self):
-        """Independent high-frequency polling strictly for events."""
+        """高频事件轮询任务"""
         await asyncio.sleep(2)
         while True:
             try:
@@ -149,14 +163,21 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                 events = await self.client.async_get_events(self.uid)
                 if self.data is not None:
                     old_events = self.data.get("events", {})
-                    old_list = old_events.get("resultData", {}).get("eventList", []) if isinstance(old_events, dict) else[]
-                    new_list = events.get("resultData", {}).get("eventList",[]) if isinstance(events, dict) else[]
+                    old_list = old_events.get("resultData", {}).get("eventList",[]) if isinstance(old_events, dict) else[]
+                    new_list = events.get("resultData", {}).get("eventList",[]) if isinstance(events, dict) else []
                     
                     old_id = old_list[0].get("id") if old_list else None
                     new_id = new_list[0].get("id") if new_list else None
                     
                     if old_id != new_id:
-                        _LOGGER.debug("[%s] 轮询到新事件！触发 HA 状态刷新。", self.device_name)
+                        _LOGGER.debug("[%s] 轮询到新事件！", self.device_name)
+                        
+                        # 检测是否是门铃呼叫 (Type 1)，若是，触发 60 秒长连接窗口期
+                        if new_list:
+                            latest_event = new_list[0]
+                            if str(latest_event.get("type")) == "1":
+                                self.trigger_doorbell_window()
+                        
                         new_data = dict(self.data)
                         new_data["events"] = events
                         self.async_set_updated_data(new_data)
@@ -166,7 +187,7 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                 pass
 
     async def _async_update_data(self):
-        """Fetch general parameters from API endpoints."""
+        """定时参数拉取 (30s)"""
         try:
             settings = await self.client.async_get_settings(self.uid)
             wx_push = await self.client.async_get_wx_push_status(self.uid)

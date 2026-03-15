@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 import logging
 from typing import Any
 
@@ -24,7 +25,6 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the lock platform."""
     coordinators = hass.data[DOMAIN][entry.entry_id]
     auth_pass = entry.data.get("auth_pass")
     
@@ -36,7 +36,6 @@ class LancensLock(CoordinatorEntity, LockEntity):
     """Lancens Lock Entity."""
 
     def __init__(self, coordinator: LancensDataUpdateCoordinator, auth_pass: str | None) -> None:
-        """Initialize the lock."""
         super().__init__(coordinator)
         self._auth_pass = auth_pass
         self._attr_unique_id = f"{coordinator.uid}_lock"
@@ -48,7 +47,6 @@ class LancensLock(CoordinatorEntity, LockEntity):
 
     @property
     def device_info(self):
-        """Return device information about this entity."""
         return {
             "identifiers": {(DOMAIN, self.coordinator.uid)},
             "name": self.coordinator.device_name,
@@ -118,7 +116,7 @@ class LancensLock(CoordinatorEntity, LockEntity):
                     
                     if device_type == "LOCK_PUSH":
                         if event_code == "15":
-                            self._trigger_state_sequence("event_unlock")
+                            self._trigger_state_sequence("unlock_success")
                         elif event_code == "14":
                             self._trigger_state_sequence("locking")
                         else:
@@ -133,25 +131,8 @@ class LancensLock(CoordinatorEntity, LockEntity):
 
     async def _async_state_sequence(self, seq_type: str):
         try:
-            if seq_type == "event_unlock":
-                # 轮询获取到别人开锁：正在打开1秒 已打开3秒 正在确定(锁定)1秒
-                self._lock_state = "unlocking"
-                self.async_write_ha_state()
-                await asyncio.sleep(1)
-                
-                self._lock_state = "unlocked"
-                self.async_write_ha_state()
-                await asyncio.sleep(3)
-                
-                self._lock_state = "locking"
-                self.async_write_ha_state()
-                await asyncio.sleep(1)
-                
-                self._lock_state = "locked"
-                self.async_write_ha_state()
-
-            elif seq_type == "remote_unlock":
-                # 远程开锁成功：正在解锁1秒 已解锁2秒 正在锁定1秒
+            if seq_type == "unlock_success":
+                # 获取到成功开门：正在打开1秒 已打开2秒 正在锁定1秒
                 self._lock_state = "unlocking"
                 self.async_write_ha_state()
                 await asyncio.sleep(1)
@@ -168,7 +149,7 @@ class LancensLock(CoordinatorEntity, LockEntity):
                 self.async_write_ha_state()
                 
             elif seq_type == "jammed":
-                # 冻结：视为卡住 20秒
+                # 被冻结：卡住 20 秒
                 self._lock_state = "jammed"
                 self.async_write_ha_state()
                 await asyncio.sleep(20)
@@ -177,7 +158,7 @@ class LancensLock(CoordinatorEntity, LockEntity):
                 self.async_write_ha_state()
                 
             elif seq_type == "locking":
-                # 轮询到已关锁：正在锁定 2.5 秒
+                # 收到已锁定：正在锁定 2.5 秒
                 self._lock_state = "locking"
                 self.async_write_ha_state()
                 await asyncio.sleep(2.5)
@@ -195,39 +176,86 @@ class LancensLock(CoordinatorEntity, LockEntity):
         self.async_write_ha_state()
 
     async def async_unlock(self, **kwargs: Any) -> None:
-        _LOGGER.info("====== 收到 HA 前端开锁请求 ======")
+        """从前端发起远程开锁命令"""
         if not self._auth_pass:
-            _LOGGER.error("开锁中止：未在配置流中填写 auth_pass")
-            raise HomeAssistantError("未配置安全密码 (auth_pass)，无法执行远程开锁。请重新配置集成输入密码。")
+            raise HomeAssistantError("未配置安全密码 (auth_pass)，无法执行远程开锁。请重新配置集成。")
 
-        push_data = self.coordinator.latest_push_data
-        _LOGGER.info("当前长轮询抓取到的凭证: %s", push_data)
+        # 判断窗口期是否过期或根本没触发
+        if time.time() > self.coordinator.doorbell_window_end:
+            _LOGGER.error("拒绝开锁：没有收到门铃呼叫或窗口期已超时！")
+            raise HomeAssistantError("拒绝开锁：未收到门铃呼叫，或 60 秒安全窗口已超时失效。")
 
-        if not push_data:
-            _LOGGER.error("开锁中止：未能读取到任何轮询凭证。可能尚未在门上按铃。")
-            raise HomeAssistantError("由于尚未收到访客的门铃呼叫推送，此时无法获取有效的安全开锁凭证。请在门锁上先发起呼叫！")
+        _LOGGER.info("====== 允许下发，进入 60 秒凭证轮询等待队列 ======")
 
-        event_guid = push_data.get("event_guid")
-        user_id = push_data.get("user_id")
-        reflash_token = push_data.get("reflash_token")
+        # 中断可能正在运行的其它动画协程
+        if self._state_task:
+            self._state_task.cancel()
+        
+        # 立即将 UI 置为解锁中并维持
+        self._lock_state = "unlocking"
+        self.async_write_ha_state()
 
-        if not all([event_guid, user_id, reflash_token]):
-            _LOGGER.error("开锁中止：轮询凭证数据缺失。guid=%s, uid=%s, token=%s", event_guid, user_id, reflash_token)
-            raise HomeAssistantError("长连接收到的推送数据不完整，无法发起开锁。")
+        # 启动后台轮询执行任务，立即返回让前端顺畅显示动画
+        self._state_task = self.hass.async_create_task(self._async_wait_and_unlock())
 
-        _LOGGER.info("即将向服务器提交验证参数...")
-        success = await self.coordinator.client.async_unlock(
-            uid=self.coordinator.uid,
-            event_guid=event_guid,
-            user_id=user_id,
-            reflash_token=reflash_token,
-            auth_pass=self._auth_pass
-        )
+    async def _async_wait_and_unlock(self):
+        """后台窗口期轮询拦截"""
+        try:
+            success = False
+            # 持续轮询直至超过窗口期截止时间
+            while time.time() < self.coordinator.doorbell_window_end:
+                push_data = self.coordinator.latest_push_data
+                
+                if push_data and "reflash_token" in push_data:
+                    event_guid = push_data.get("event_guid")
+                    user_id = push_data.get("user_id")
+                    reflash_token = push_data.get("reflash_token")
+                    
+                    _LOGGER.info("捕获到有效开锁凭证！正在立即下发 HTTP 请求...")
+                    success = await self.coordinator.client.async_unlock(
+                        uid=self.coordinator.uid,
+                        event_guid=event_guid,
+                        user_id=user_id,
+                        reflash_token=reflash_token,
+                        auth_pass=self._auth_pass
+                    )
+                    # 清空本次成功拦截到的凭证防重用
+                    self.coordinator.latest_push_data = {}
+                    break
+                
+                # 每隔 1 秒进行检查
+                await asyncio.sleep(1)
 
-        if not success:
-            _LOGGER.error("服务器返回了非预期的结果，开锁失败。")
-            raise HomeAssistantError("开锁请求失败，请检查控制台日志确认错误原因（可能是签名失效或密码错误）。")
-        else:
-            _LOGGER.info("服务器返回200！开锁指令下发成功，触发前端动画！")
-            self._trigger_state_sequence("remote_unlock")
-            await self.coordinator.async_request_refresh()
+            if success:
+                _LOGGER.info("开锁成功！播放成功状态帧。")
+                # 远程开锁：正在解锁1秒 已解锁2秒 正在锁定1秒 (前置已由 async_unlock 触发，此处补齐)
+                await asyncio.sleep(1)
+                
+                self._lock_state = "unlocked"
+                self.async_write_ha_state()
+                await asyncio.sleep(2)
+                
+                self._lock_state = "locking"
+                self.async_write_ha_state()
+                await asyncio.sleep(1)
+                
+                self._lock_state = "locked"
+                self.async_write_ha_state()
+                
+                await self.coordinator.async_request_refresh()
+            else:
+                _LOGGER.error("开锁失败！窗口期耗尽或密码验证未通过。")
+                self.hass.components.persistent_notification.async_create(
+                    "安全窗口期 60 秒内未能捕获有效凭证，或因密码错误等原因遭到门锁系统拦截。\n\n已被重置回锁定状态。",
+                    title=f"{self._attr_name} 开锁失败",
+                    notification_id=f"{self.unique_id}_unlock_failed"
+                )
+                self._lock_state = "locked"
+                self.async_write_ha_state()
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            _LOGGER.error("等待执行开锁流时发生异常: %s", e)
+            self._lock_state = "locked"
+            self.async_write_ha_state()
