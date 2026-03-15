@@ -16,25 +16,23 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the number platform."""
-    coordinator: LancensDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinators = hass.data[DOMAIN][entry.entry_id]
     
-    async_add_entities([
-        LancensNumber(
-            coordinator, 
+    entities =[]
+    for coord in coordinators.values():
+        entities.append(LancensNumber(
+            coord, 
             "screenon_timeout", 
             "亮屏时间", 
             "mdi:timer-sand",
             min_value=5,
             max_value=120,
             step=1
-        )
-    ])
+        ))
+    async_add_entities(entities)
 
 
 class LancensNumber(CoordinatorEntity, NumberEntity):
-    """Lancens number entity."""
-
     def __init__(
         self,
         coordinator: LancensDataUpdateCoordinator,
@@ -45,19 +43,26 @@ class LancensNumber(CoordinatorEntity, NumberEntity):
         max_value: float,
         step: float,
     ) -> None:
-        """Initialize."""
         super().__init__(coordinator)
         self._key = key
         self._attr_unique_id = f"{coordinator.uid}_{key}"
-        self._attr_name = name
+        self._attr_name = f"{coordinator.device_name} {name}"
         self._attr_icon = icon
         self._attr_native_min_value = min_value
         self._attr_native_max_value = max_value
         self._attr_native_step = step
 
     @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.uid)},
+            "name": self.coordinator.device_name,
+            "manufacturer": "叮叮智能",
+            "model": "智能门锁"
+        }
+
+    @property
     def native_value(self) -> float | None:
-        """Return the value."""
         if not self.coordinator.data:
             return None
             
@@ -67,7 +72,6 @@ class LancensNumber(CoordinatorEntity, NumberEntity):
         return None
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set the value."""
         try:
             await self.coordinator.client.async_set_screen_settings(self.coordinator.uid, **{self._key: int(value)})
             await self.coordinator.async_request_refresh()

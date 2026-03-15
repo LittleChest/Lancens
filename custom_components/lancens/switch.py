@@ -19,15 +19,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the switch platform."""
-    coordinator: LancensDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinators = hass.data[DOMAIN][entry.entry_id]
     
     entities =[]
-    
-    entities.append(LancensSettingSwitch(coordinator, "bat_display_en", "电量显示", "mdi:battery"))
-    entities.append(LancensSettingSwitch(coordinator, "call_screen_on", "呼叫唤醒", "mdi:video"))
-    entities.append(LancensSettingSwitch(coordinator, "standby_mode", "待机模式", "mdi:power-sleep"))
-    
-    entities.append(LancensWxPushSwitch(coordinator))
+    for coord in coordinators.values():
+        entities.append(LancensSettingSwitch(coord, "bat_display_en", "电量显示", "mdi:battery"))
+        entities.append(LancensSettingSwitch(coord, "call_screen_on", "呼叫唤醒", "mdi:video"))
+        entities.append(LancensSettingSwitch(coord, "standby_mode", "待机模式", "mdi:power-sleep"))
+        entities.append(LancensWxPushSwitch(coord))
     
     async_add_entities(entities)
 
@@ -42,16 +41,23 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
         name: str,
         icon: str,
     ) -> None:
-        """Initialize the switch."""
         super().__init__(coordinator)
         self._key = key
         self._attr_unique_id = f"{coordinator.uid}_{key}"
-        self._attr_name = name
+        self._attr_name = f"{coordinator.device_name} {name}"
         self._attr_icon = icon
 
     @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.uid)},
+            "name": self.coordinator.device_name,
+            "manufacturer": "叮叮智能",
+            "model": "智能门锁"
+        }
+
+    @property
     def is_on(self) -> bool | None:
-        """Return true if switch is on."""
         if not self.coordinator.data:
             return None
             
@@ -62,7 +68,6 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
         return None
 
     def _get_current_screenon_timeout(self) -> int:
-        """Get the current screenon_timeout to satisfy API requirements."""
         if self.coordinator.data:
             settings_list = self.coordinator.data.get("settings",[])
             if settings_list and isinstance(settings_list, list) and len(settings_list) > 0:
@@ -70,7 +75,6 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
         return 5
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the switch on."""
         try:
             if self._key == "bat_display_en":
                  await self.coordinator.client.async_set_battery_display(self.coordinator.uid, True)
@@ -82,7 +86,6 @@ class LancensSettingSwitch(CoordinatorEntity, SwitchEntity):
             raise HomeAssistantError(f"Failed to turn on: {err}") from err
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the switch off."""
         try:
             if self._key == "bat_display_en":
                  await self.coordinator.client.async_set_battery_display(self.coordinator.uid, False)
@@ -97,15 +100,22 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
     """Switch for WX Push."""
 
     def __init__(self, coordinator: LancensDataUpdateCoordinator) -> None:
-        """Initialize."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.uid}_wx_push"
-        self._attr_name = "微信推送"
+        self._attr_name = f"{coordinator.device_name} 微信推送"
         self._attr_icon = "mdi:wechat"
 
     @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.uid)},
+            "name": self.coordinator.device_name,
+            "manufacturer": "叮叮智能",
+            "model": "智能门锁"
+        }
+
+    @property
     def is_on(self) -> bool | None:
-        """Return true if on."""
         if not self.coordinator.data:
             return None
             
@@ -116,7 +126,6 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
         return bool(data.get("wx_push"))
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn on."""
         try:
             await self.coordinator.client.async_set_wx_push(self.coordinator.uid, True)
             await self.coordinator.async_request_refresh()
@@ -124,7 +133,6 @@ class LancensWxPushSwitch(CoordinatorEntity, SwitchEntity):
             raise HomeAssistantError(f"Failed to turn on: {err}") from err
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn off."""
         try:
             await self.coordinator.client.async_set_wx_push(self.coordinator.uid, False)
             await self.coordinator.async_request_refresh()

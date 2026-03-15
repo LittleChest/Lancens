@@ -31,37 +31,31 @@ class LancensApiClient:
         )
 
     async def async_get_events(self, uid: str, time: str = None) -> dict:
-        """Get events from the API."""
         url = f"{self._base_url}/v1/api/mini/device/event/info/all?type=main&chooseType=&uid={uid}&page=0&page_number=20"
         if time:
             url += f"&time={time}"
         return await self._api_wrapper(method="get", url=url)
 
     async def async_get_settings(self, uid: str) -> list:
-        """Get settings from the API."""
         url = f"{self._base_url}/v1/api/device/screen/light?uid={uid}&entry=mini"
         return await self._api_wrapper(method="get", url=url)
 
     async def async_set_screen_settings(self, uid: str, **kwargs) -> bool:
-        """Set screen settings."""
         url = f"{self._base_url}/v1/api/device/screen/light"
         data = {"uid": uid, "entry": "mini"}
         data.update(kwargs)
         return await self._api_wrapper(method="post", url=url, data=data)
 
     async def async_get_wx_push_status(self, uid: str) -> dict:
-        """Get push status."""
         url = f"{self._base_url}/v1/api/device/mini/wx/push/status?uid={uid}&entry=mini&type=main"
         return await self._api_wrapper(method="get", url=url)
 
     async def async_set_wx_push(self, uid: str, enabled: bool) -> bool:
-        """Set push status."""
         url = f"{self._base_url}/v1/api/device/mini/push"
         data = {"type": "main", "uid": uid, "wx_push": 1 if enabled else 0}
         return await self._api_wrapper(method="post", url=url, data=data)
 
     async def async_set_battery_display(self, uid: str, enabled: bool) -> bool:
-        """Set battery display."""
         url = f"{self._base_url}/v1/api/device/battery/status"
         data = {"uuid": uid, "entry": "mini", "bat_display_en": 1 if enabled else 0}
         return await self._api_wrapper(method="post", url=url, data=data)
@@ -69,7 +63,6 @@ class LancensApiClient:
     async def async_unlock(self, uid: str, event_guid: str, user_id: str, reflash_token: str, auth_pass: str) -> bool:
         """Send remote unlock request."""
         url = f"{self._base_url}/v1/api/server/open/lock"
-        # Dummy sign as placeholder based on payload log (normally evaluated via hashing)
         sign = "92efcc26007c2faa730d212cb4e7c57a7ee821dd" 
         data = {
             "authPass": auth_pass,
@@ -82,22 +75,27 @@ class LancensApiClient:
             "sign": sign
         }
         
+        _LOGGER.info("API 准备发送远程开锁请求, URL: %s", url)
+        _LOGGER.info("API 开锁 Payload 数据: %s", data)
         try:
             res = await self._api_wrapper(method="post", url=url, data=data)
-            # Some firmwares also require notifying the mini/lock/event endpoint right after
+            _LOGGER.info("API 远程开锁服务器响应结果: %s", res)
+            
+            # Post-notify
             try:
                 await self._api_wrapper(method="post", url=f"{self._base_url}/v1/api/mini/lock/event", data={"uid": uid})
-            except Exception:
-                pass
+                _LOGGER.info("API 开锁后状态通知成功发送")
+            except Exception as ev_err:
+                _LOGGER.warning("API 开锁后状态通知发送失败 (不影响开门): %s", ev_err)
+                
             return True
         except Exception as e:
-            _LOGGER.error("Unlock failed: %s", e)
+            _LOGGER.error("API 开锁过程中发生异常: %s", e)
             return False
 
     async def _api_wrapper(
         self, method: str, url: str, data: dict | None = None, headers: dict | None = None
     ) -> any:
-        """Get information from the API."""
         if headers is None:
             headers = {}
         headers["token"] = self._token
@@ -118,10 +116,9 @@ class LancensApiClient:
                         if response.status == 204:
                             return True
                         return await response.json(content_type=None)
-            except aiohttp.ServerDisconnectedError as exception:
+            except aiohttp.ServerDisconnectedError:
                 if attempt == 2:
                     raise
                 await asyncio.sleep(0.5)
             except Exception as exception:
-                _LOGGER.error("Error communicating with %s - %s", url, exception)
                 raise

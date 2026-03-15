@@ -15,7 +15,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .api import LancensApiClient
-from .const import DOMAIN, CONF_TOKEN, CONF_UID
+from .const import DOMAIN, CONF_TOKEN, CONF_EVENT_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,49 +32,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     token = entry.data[CONF_TOKEN]
-    uid = entry.data.get(CONF_UID)
+    event_interval = entry.data.get(CONF_EVENT_INTERVAL, 1)
 
     session = async_get_clientsession(hass)
     client = LancensApiClient(token=token, session=session)
 
-    # If UID is missing, try to discover it
-    if not uid:
-        try:
-             _LOGGER.info("UID not provided, attempting discovery...")
-             devices = await client.async_get_data()
-             
-             device_list =[]
-             if isinstance(devices, dict):
-                 device_list = devices.get("deviceList",[])
-             elif isinstance(devices, list):
-                 device_list = devices
-
-             if device_list and len(device_list) > 0:
-                 first_device = device_list[0]
-                 uid = first_device.get("uid") or first_device.get("uuid") or first_device.get("id")
-                 if uid:
-                     _LOGGER.info("Discovered device with UID: %s", uid)
-                 else:
-                     _LOGGER.error("Could not find UID in device data: %s", first_device)
-                     return False
-             else:
-                 _LOGGER.error("Device list is empty or invalid format: %s", devices)
-                 return False
-                 
-        except Exception as err:
-             _LOGGER.error("Failed to discover devices: %s", err)
-             return False
-
-    if not uid:
-        _LOGGER.error("No UID found or provided. Setup failed.")
+    try:
+        devices = await client.async_get_data()
+        device_list = devices.get("deviceList",[]) if isinstance(devices, dict) else (devices if isinstance(devices, list) else[])
+        if not device_list:
+            _LOGGER.error("叮叮智能：未发现任何设备，加载失败。")
+            return False
+    except Exception as err:
+        _LOGGER.error("叮叮智能：拉取设备列表失败，%s", err)
         return False
 
-    # Create the coordinator
-    coordinator = LancensDataUpdateCoordinator(hass, client, str(uid))
-    await coordinator.async_setup()  # Start the background task for long-polling
-    await coordinator.async_config_entry_first_refresh()
+    coordinators = {}
+    for dev in device_list:
+        uid = dev.get("uid") or dev.get("uuid") or dev.get("id")
+        name = dev.get("name", "智能锁")
+        if uid:
+            _LOGGER.info("发现叮叮设备: %s (UID: %s)", name, uid)
+            coord = LancensDataUpdateCoordinator(hass, client, str(uid), name, event_interval)
+            await coord.async_setup()
+            await coord.async_config_entry_first_refresh()
+            coordinators[str(uid)] = coord
 
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    if not coordinators:
+        return False
+
+    # 保存由 uid 映射的多个 coordinator
+    hass.data[DOMAIN][entry.entry_id] = coordinators
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -83,9 +71,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    coordinator = hass.data[DOMAIN].get(entry.entry_id)
-    if coordinator and coordinator.push_task:
-        coordinator.push_task.cancel()
+    coordinators = hass.data[DOMAIN].get(entry.entry_id, {})
+    for coord in coordinators.values():
+        if getattr(coord, "push_task", None):
+            coord.push_task.cancel()
+        if getattr(coord, "event_task", None):
+            coord.event_task.cancel()
 
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
@@ -101,24 +92,31 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
         hass: HomeAssistant,
         client: LancensApiClient,
         uid: str,
+        device_name: str,
+        event_interval: int,
     ) -> None:
         """Initialize."""
         self.client = client
         self.uid = uid
+        self.device_name = device_name
+        self.event_interval = event_interval
         self.data = {}
         self.latest_push_data = {}
-        self.push_task = None
+        
+        self.push_task: asyncio.Task | None = None
+        self.event_task: asyncio.Task | None = None
         
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
+            name=f"{DOMAIN}_{uid}",
             update_interval=timedelta(seconds=30),
         )
 
     async def async_setup(self):
-        """Setup background task for realtime push events."""
+        """Setup background tasks."""
         self.push_task = self.hass.loop.create_task(self._async_push_listener())
+        self.event_task = self.hass.loop.create_task(self._async_event_poller())
 
     async def _async_push_listener(self):
         """Long polling for push events to capture unlock credentials."""
@@ -133,46 +131,51 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                         data = await response.json(content_type=None)
                         if data and "reflash_token" in data:
                             self.latest_push_data = data
-                            _LOGGER.info("Received new unlock credentials via push data: %s", data)
+                            _LOGGER.debug("[%s] 收到最新长连接推送凭证: %s", self.device_name, data)
                             await self.async_request_refresh()
                     elif response.status == 204:
-                        # Timeout/no event, just continue
                         pass
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                _LOGGER.debug("Push listener error (reconnecting in 5s): %s", e)
+            except Exception:
                 await asyncio.sleep(5)
 
-    async def _async_update_data(self):
-        """Fetch data from API endpoint."""
-        try:
-            # 1. Events (for last unlock)
+    async def _async_event_poller(self):
+        """Independent high-frequency polling strictly for events."""
+        await asyncio.sleep(2)
+        while True:
             try:
+                await asyncio.sleep(self.event_interval)
                 events = await self.client.async_get_events(self.uid)
-            except Exception as e:
-                _LOGGER.warning("Error fetching events: %s", e)
-                events = {}
+                if self.data is not None:
+                    old_events = self.data.get("events", {})
+                    old_list = old_events.get("resultData", {}).get("eventList", []) if isinstance(old_events, dict) else[]
+                    new_list = events.get("resultData", {}).get("eventList",[]) if isinstance(events, dict) else[]
+                    
+                    old_id = old_list[0].get("id") if old_list else None
+                    new_id = new_list[0].get("id") if new_list else None
+                    
+                    if old_id != new_id:
+                        _LOGGER.debug("[%s] 轮询到新事件！触发 HA 状态刷新。", self.device_name)
+                        new_data = dict(self.data)
+                        new_data["events"] = events
+                        self.async_set_updated_data(new_data)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
 
-            # 2. Settings (Screen/Light)
-            try:
-                settings = await self.client.async_get_settings(self.uid)
-            except Exception as e:
-                _LOGGER.warning("Error fetching settings: %s", e)
-                settings =[]
-
-            # 3. WX Push Status
-            try:
-                wx_push = await self.client.async_get_wx_push_status(self.uid)
-            except Exception as e:
-                _LOGGER.warning("Error fetching wx_push: %s", e)
-                wx_push = {}
+    async def _async_update_data(self):
+        """Fetch general parameters from API endpoints."""
+        try:
+            settings = await self.client.async_get_settings(self.uid)
+            wx_push = await self.client.async_get_wx_push_status(self.uid)
+            events = self.data.get("events", {}) if self.data else await self.client.async_get_events(self.uid)
             
             return {
                 "events": events,
                 "settings": settings,
                 "wx_push": wx_push
             }
-
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err

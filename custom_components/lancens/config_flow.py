@@ -14,15 +14,15 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import LancensApiClient
-from .const import DOMAIN, CONF_UID
+from .const import DOMAIN, CONF_EVENT_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_TOKEN): str,
-        vol.Optional(CONF_UID): str,
         vol.Optional("auth_pass"): str,
+        vol.Optional(CONF_EVENT_INTERVAL, default=1): int,
     }
 )
 
@@ -31,26 +31,16 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     session = async_get_clientsession(hass)
     client = LancensApiClient(token=data[CONF_TOKEN], session=session)
 
-    uid = data.get(CONF_UID)
-    if uid:
-        try:
-            await client.async_get_settings(uid)
-        except Exception:
-            try:
-                await client.async_get_data()
-            except Exception as e:
-                raise InvalidAuth from e
-    else:
-        try:
-            devices = await client.async_get_data()
-            device_list = devices.get("deviceList",[]) if isinstance(devices, dict) else (devices if isinstance(devices, list) else[])
-            if device_list and len(device_list) > 0:
-                first_device = device_list[0]
-                uid = first_device.get("uid") or first_device.get("uuid") or first_device.get("id")
-        except Exception as err:
-             raise InvalidAuth from err
+    try:
+        devices = await client.async_get_data()
+        device_list = devices.get("deviceList",[]) if isinstance(devices, dict) else (devices if isinstance(devices, list) else[])
+        if not device_list or len(device_list) == 0:
+            raise InvalidAuth("账号下未找到任何绑定的设备")
+    except Exception as err:
+        raise InvalidAuth from err
 
-    return {"title": f"叮叮智能 {uid if uid else ''}".strip()}
+    # 取账号下的设备总数作为展示信息
+    return {"title": f"叮叮智能 (发现 {len(device_list)} 个设备)"}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -77,6 +67,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:
             errors["base"] = "unknown"
         else:
+            # 以 Token 的前8位作为 unique_id 防止重复添加
+            await self.async_set_unique_id(user_input[CONF_TOKEN][:8])
+            self._abort_if_unique_id_configured()
             return self.async_create_entry(title=info["title"], data=user_input)
 
         return self.async_show_form(

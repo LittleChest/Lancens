@@ -1,10 +1,10 @@
 {
     "domain": "lancens",
     "name": "叮叮智能",
-    "codeowners": [
+    "codeowners":[
         "LittleChest"
     ],
     "iot_class": "cloud_polling",
     "config_flow": true,
-    "version": "20260314.1"
+    "version": "20260315.1"
 }

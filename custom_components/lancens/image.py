@@ -28,25 +28,29 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the image platform."""
-    coordinator: LancensDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    
-    async_add_entities([LancensLastEventImage(hass, coordinator)])
+    coordinators = hass.data[DOMAIN][entry.entry_id]
+    entities =[LancensLastEventImage(hass, coord) for coord in coordinators.values()]
+    async_add_entities(entities)
 
 
 class LancensLastEventImage(CoordinatorEntity, ImageEntity):
-    """Representation of a Lancens Last Event Image."""
-
     def __init__(self, hass: HomeAssistant, coordinator: LancensDataUpdateCoordinator) -> None:
-        """Initialize the image."""
         super().__init__(coordinator)
         ImageEntity.__init__(self, hass)
         self._attr_unique_id = f"{coordinator.uid}_last_event_image"
-        self._attr_name = "最新事件抓拍"
+        self._attr_name = f"{coordinator.device_name} 最新事件抓拍"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.uid)},
+            "name": self.coordinator.device_name,
+            "manufacturer": "叮叮智能",
+            "model": "智能门锁"
+        }
 
     @property
     def image_url(self) -> str | None:
-        """Return URL of image."""
         if not self.coordinator.data:
             return None
         
@@ -75,10 +79,9 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
     
     @property
     def image_last_updated(self) -> dt_util.dt.datetime | None:
-        """The time when the image was last updated."""
         if self.coordinator.data:
             events = self.coordinator.data.get("events")
-            event_list = events.get("resultData", {}).get("eventList", [])
+            event_list = events.get("resultData", {}).get("eventList",[])
             if event_list and len(event_list) > 0:
                 time_str = event_list[0].get("time")
                 if time_str:
@@ -86,7 +89,6 @@ class LancensLastEventImage(CoordinatorEntity, ImageEntity):
         return self._attr_image_last_updated
 
     async def async_image(self) -> bytes | None:
-        """Fetch image from URL with specific headers to bypass hotlink protection."""
         url = self.image_url
         if not url:
             return None
