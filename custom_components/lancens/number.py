@@ -5,7 +5,7 @@ from .entity import LancensEntity
 
 async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([
-        LancensNumber(c, "screenon_timeout", "亮屏时间", "mdi:timer-sand", 5, 120, 1)
+        LancensNumber(c, "screenon_timeout", "亮屏时间", "mdi:timer-sand", 5, 60, 1)
         for c in hass.data[DOMAIN][entry.entry_id].values()
     ])
 
