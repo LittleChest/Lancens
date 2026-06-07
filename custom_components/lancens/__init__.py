@@ -115,4 +115,7 @@ class LancensDataUpdateCoordinator(DataUpdateCoordinator):
                 except Exception: pass
             return {"events": events, "settings": settings, "wx_push": wx_push}
         except Exception as err:
-            raise UpdateFailed(f"无法连接到服务器: {err}") from err
+            _LOGGER.warning("无法连接: %s", err)
+            if self.data:
+                return self.data
+            raise UpdateFailed(f"无法连接: {err}") from err
