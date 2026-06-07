@@ -38,6 +38,8 @@ class LancensLastEventSensor(LancensEntity, SensorEntity):
                         return f"{method}开锁{f' (用户{uid})' if uid and uid != '0' else ''}"
                     if event_code == "14":
                         return "已关锁"
+                    if event_code == "6":
+                        return "电池电量不足"
                     return f"门锁已冻结 - {EVENT_TYPE_MAP.get(event_code, f'代码 {event_code}')}"
             except Exception:
                 pass
